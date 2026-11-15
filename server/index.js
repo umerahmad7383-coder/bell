@@ -15,6 +15,11 @@ const PORT = Number(process.env.PORT) || 3000;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || '*';
 const MAX_PLAYERS = Math.min(8, Number(process.env.MAX_PLAYERS) || 8);
 const MIN_PLAYERS = Math.max(1, Number(process.env.MIN_PLAYERS) || 1); // 1 lets you test solo
+// Voice chat connects players directly (WebRTC). STUN servers let them find a route through home
+// routers. Some strict networks also need a TURN relay: put one here as JSON, e.g.
+//   ICE_SERVERS=[{"urls":"turn:turn.example.com:3478","username":"u","credential":"p"}]
+let ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }];
+try { if (process.env.ICE_SERVERS) ICE_SERVERS = ICE_SERVERS.concat(JSON.parse(process.env.ICE_SERVERS)); } catch { console.error('ICE_SERVERS is not valid JSON; ignoring it'); }
 
 const app = express();
 const clientDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'client');
@@ -45,7 +50,7 @@ const cleanName = (n) => String(n ?? '').replace(/[\u0000-\u001f<>]/g, '').trim(
 function lobbyView(l) {
   return {
     code: l.code, hostId: l.hostPid, mode: l.mode, difficulty: l.difficulty, state: l.state, max: MAX_PLAYERS, min: MIN_PLAYERS,
-    players: [...l.members.values()].map((m) => ({ id: m.pid, name: m.name, look: m.look, ready: m.ready, inGame: !!(l.game && l.game.players.has(m.pid)) })),
+    players: [...l.members.values()].map((m) => ({ id: m.pid, name: m.name, look: m.look, ready: m.ready, voice: !!m.voice, inGame: !!(l.game && l.game.players.has(m.pid)) })),
     last: l.last || null,
   };
 }
@@ -77,6 +82,7 @@ function leaveLobby(socket) {
   l.members.delete(socket.id);
   socket.leave(code);
   if (m && l.game) l.game.removePlayer(m.pid);
+  if (m && m.voice) io.to(code).emit('voice:gone', { id: m.pid });
   if (l.members.size === 0) { stopGame(l); lobbies.delete(code); return; }
   if (m && l.hostPid === m.pid) l.hostPid = [...l.members.values()][0].pid; // host migration
   pushLobby(l);
@@ -91,8 +97,15 @@ function startGame(l) {
   const members = [...l.members.values()];
   const sidOf = new Map(members.map((m) => [m.pid, m.sid]));
   l.state = 'playing';
+  // Hunt: a random player is the Headmaster, but never the same person twice running if avoidable
+  let hunterPid = null;
+  if (l.mode === 'hunt' && members.length >= 2) {
+    const pool = members.filter((m) => m.pid !== l.lastHunter);
+    hunterPid = (pool.length ? pool : members)[(Math.random() * (pool.length || members.length)) | 0].pid;
+    l.lastHunter = hunterPid;
+  }
   l.game = new Game({
-    mode: l.mode, difficulty: l.difficulty,
+    mode: l.mode, difficulty: l.difficulty, hunterPid,
     players: members.map((m) => ({ pid: m.pid, name: m.name, look: m.look })),
     send: (ev, data) => io.to(l.code).emit(ev, data),
     sendTo: (pid, ev, data) => { const sid = sidOf.get(pid); if (sid) io.to(sid).emit(ev, data); },
@@ -142,7 +155,7 @@ io.on('connection', (socket) => {
   socket.on('lobby:ready', (v) => { const l = lobbyOf(), m = member(); if (l && m) { m.ready = !!v; pushLobby(l); } });
   socket.on('lobby:mode', (v) => {
     const l = lobbyOf(), m = member();
-    if (l && m && m.pid === l.hostPid && l.state !== 'playing' && v === 'coop') { l.mode = v; pushLobby(l); }
+    if (l && m && m.pid === l.hostPid && l.state !== 'playing' && (v === 'coop' || v === 'hunt')) { l.mode = v; pushLobby(l); }
   });
   socket.on('lobby:difficulty', (v) => {
     const l = lobbyOf(), m = member();
@@ -156,6 +169,7 @@ io.on('connection', (socket) => {
     if (m.pid !== l.hostPid) return ack(cb, { ok: false, error: 'Only the host can start the match.' });
     if (l.state === 'playing') return ack(cb, { ok: false, error: 'Match already running.' });
     if (l.members.size < MIN_PLAYERS) return ack(cb, { ok: false, error: `Need at least ${MIN_PLAYERS} players.` });
+    if (l.mode === 'hunt' && l.members.size < 2) return ack(cb, { ok: false, error: 'Hunt Mode needs at least two players: one Headmaster and one survivor.' });
     const notReady = [...l.members.values()].filter((x) => x.pid !== l.hostPid && !x.ready);
     if (notReady.length) return ack(cb, { ok: false, error: `Waiting for: ${notReady.map((x) => x.name).join(', ')}` });
     stopGame(l);
@@ -183,6 +197,26 @@ io.on('connection', (socket) => {
   socket.on('g:use', (m) => game()?.onUse(socket.data.pid, m));
   socket.on('g:drop', (slot) => game()?.onDrop(socket.data.pid, slot));
   socket.on('g:ping', (m) => game()?.onPing(socket.data.pid, m));
+  socket.on('g:voice', (level) => game()?.onVoice(socket.data.pid, level));
+  socket.on('g:mstate', (s) => game()?.onMonsterMove(socket.data.pid, s));
+  socket.on('g:mact', (m) => game()?.onMonsterAct(socket.data.pid, m));
+
+  // ---- voice chat signalling: the server only introduces players; audio flows directly between them ----
+  socket.on('voice:join', (_d, cb) => {
+    const l = lobbyOf(), m = member();
+    if (!l || !m) return ack(cb, { ok: false });
+    m.voice = true;
+    ack(cb, { ok: true, ice: ICE_SERVERS, peers: [...l.members.values()].filter((x) => x.voice && x.pid !== m.pid).map((x) => x.pid) });
+    pushLobby(l);
+  });
+  socket.on('voice:leave', () => { const l = lobbyOf(), m = member(); if (l && m && m.voice) { m.voice = false; io.to(l.code).emit('voice:gone', { id: m.pid }); pushLobby(l); } });
+  socket.on('rtc', (msg) => {
+    const l = lobbyOf(), m = member();
+    if (!l || !m || !m.voice || !msg || typeof msg !== 'object') return;
+    const target = [...l.members.values()].find((x) => x.pid === (msg.to | 0) && x.voice);
+    if (!target || JSON.stringify(msg.data ?? null).length > 20000) return;
+    io.to(target.sid).emit('rtc', { from: m.pid, data: msg.data });
+  });
 
   socket.on('disconnect', () => leaveLobby(socket));
 });

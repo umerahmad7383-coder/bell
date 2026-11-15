@@ -81,6 +81,30 @@ export class ViewModel {
     group.position.set(p[0], p[1], p[2]); group.rotation.set(p[3], p[4], 0); group.scale.setScalar(p[5]);
     this.holder.add(group);
   }
+  /** Hunt mode, playing as the Headmaster: his own long hands at the bottom of the view. */
+  enableClaws() {
+    const bone = new THREE.MeshLambertMaterial({ color: 0x8f8a7a });
+    this.mclaws = [-1, 1].map((sx) => {
+      const g = new THREE.Group();
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.034, 0.7, 7), bone); arm.rotation.x = Math.PI / 2; arm.position.z = 0.36; g.add(arm);
+      for (let i = 0; i < 5; i++) { const f = new THREE.Mesh(new THREE.ConeGeometry(0.011, 0.26, 5), bone); f.rotation.x = -Math.PI / 2 + 0.3; f.rotation.z = (i - 2) * 0.2 * sx; f.position.set((i - 2) * 0.028, 0.02, -0.12); g.add(f); }
+      this.scene.add(g); return { g, sx };
+    });
+    this.swipeT = 0;
+  }
+  swipe() { this.swipeT = 0.55; }
+  updateClaws(dt, s) {
+    if (this.swipeT > 0) this.swipeT -= dt;
+    const k = this.swipeT > 0 ? Math.sin((1 - this.swipeT / 0.55) * Math.PI) : 0;
+    const mv = clamp(s.speed / 3, 0, 1.6), bob = Math.sin(s.bob * 2) * 0.012 * mv;
+    for (const c of this.mclaws) {
+      const sw = Math.sin(s.bob + (c.sx > 0 ? Math.PI : 0)) * 0.03 * mv;
+      c.g.position.set(c.sx * (0.36 - 0.2 * k), -0.3 + bob + 0.14 * k, -0.5 - 0.28 * k + sw);
+      c.g.rotation.set(-0.15 + 0.5 * k, c.sx * (0.25 + 0.3 * k), c.sx * -0.2);
+      c.g.visible = !this.scaring;
+    }
+    const l = clamp(s.light, 0.3, 2); this.amb.intensity = 0.7 * l; this.key.intensity = 0.9 * l;
+  }
   /** The face lunges into the camera for `dur` seconds. */
   startScare(dur, photo = false) { this.scareT = dur; this.scareDur = dur; const usePhoto = photo && this.photoReady; this.photo.visible = usePhoto; this.skull.visible = !usePhoto; }
   get scaring() { return this.scareT > 0; }
@@ -113,6 +137,7 @@ export class ViewModel {
 
   /** s: { flash, speed, sprint, crouch, bob, dyaw, dpitch, light, active, time } */
   update(dt, s) {
+    if (this.mclaws) { this.updateScare(dt); this.L.visible = this.R.visible = false; return this.updateClaws(dt, s); }
     const k = (r) => Math.min(1, dt * r);
     if (this.reachT > 0) this.reachT -= dt;
     if (this.use) { this.use.t += dt; if (this.use.t >= this.use.dur) { this.use = null; if (this.pendingHeld !== undefined) { const h = this.pendingHeld; this.pendingHeld = undefined; this.setHeld(h); } } }

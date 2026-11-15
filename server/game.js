@@ -3,6 +3,7 @@
 // (which is sanity-checked here).
 import { MAP, W, WALL, idx, floorY, inBounds, lineOfSight, ROOMS } from '../client/shared/map.js';
 import { Monster } from './monster.js';
+import { HumanMonster, HUNT } from './hunter.js';
 import { DIFFICULTY, ITEM_TYPES, cleanLook } from '../client/shared/defs.js';
 
 export const TICK_HZ = 15;
@@ -22,11 +23,16 @@ export const ITEM_NAMES = {
 
 export class Game {
   /** players: [{pid, name, look}], send(ev, data), sendTo(pid, ev, data), onEnd(summary) */
-  constructor({ players, send, sendTo, onEnd, mode = 'coop', difficulty = 'intermediate' }) {
-    this.send = send; this.sendTo = sendTo; this.onEnd = onEnd; this.mode = mode;
+  constructor({ players, send, sendTo, onEnd, mode = 'coop', difficulty = 'intermediate', hunterPid = null }) {
+    this.send = send; this.sendTo = sendTo; this.onEnd = onEnd;
+    // Hunt mode: one player is the Headmaster. Needs at least one survivor besides him.
+    const hunter = mode === 'hunt' && players.length >= 2 ? players.find((p) => p.pid === hunterPid) || players[0] : null;
+    this.mode = hunter ? 'hunt' : 'coop';
+    this.hunter = hunter ? hunter.pid : null; this.hunterName = hunter ? hunter.name : null;
+    if (hunter) { players = players.filter((p) => p !== hunter); difficulty = 'intermediate'; } // Hunt has its own fixed balance
     this.difficulty = DIFFICULTY[difficulty] ? difficulty : 'intermediate';
     this.D = DIFFICULTY[this.difficulty];
-    this.maxHp = this.D.hp;
+    this.maxHp = hunter ? (players.length <= 2 ? 3 : 2) : this.D.hp; // one or two survivors get an extra hit
     this.time = 0; this.over = false;
     this.doors = MAP.doors.map((d) => ({ ...d, open: false }));
     this.obj = { fusesFound: 0, fuses: 0, power: false, officeOpen: false, gateKey: false, security: false, gateOpen: false };
@@ -38,12 +44,12 @@ export class Game {
       this.players.set(pl.pid, {
         id: pl.pid, name: pl.name, look: cleanLook(pl.look, i), x: s.x, y: 0, z: s.z, ry: Math.PI / 2 * -1, rx: 0, flags: 0,
         hp: this.maxHp, state: 'alive', inv: new Array(INV_SLOTS).fill(null), hidden: -1, bleed: 0,
-        lastT: 0, stepT: 0, reviving: null, vx: 0, vz: 0, sel: 0, pingT: -9,
+        lastT: 0, stepT: 0, reviving: null, vx: 0, vz: 0, sel: 0, pingT: -9, rootT: 0, voiceT: -9,
         stats: { fuses: 0, revives: 0, hits: 0, thrown: 0 },
       });
     });
     this.spawnItems();
-    this.monster = new Monster(this);
+    this.monster = hunter ? new HumanMonster(this, hunter.pid, hunter.name) : new Monster(this);
     this.paraT = rand(14, 22);
     this.pending = []; // delayed actions {t, fn}
   }
@@ -102,6 +108,8 @@ export class Game {
   initPayload(pid) {
     return {
       you: pid, mode: this.mode, difficulty: this.difficulty, maxHp: this.maxHp,
+      role: pid === this.hunter ? 'monster' : 'survivor', hunter: this.hunter ? { id: this.hunter, name: this.hunterName } : null, hunt: HUNT,
+      traps: this.monster.human ? this.monster.traps.map((t) => ({ id: t.id, p: [t.x, t.y, t.z] })) : [],
       players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, look: p.look, x: p.x, y: p.y, z: p.z, state: p.state, hp: p.hp })),
       items: [...this.items.values()].map(pubItem),
       doors: this.doors.map((d) => [d.open ? 1 : 0, d.locked ? 1 : 0]),
@@ -140,6 +148,7 @@ export class Game {
     p.ry = ry; p.rx = rx; p.flags = flags | 0;
     if (s.length > 6) p.sel = Math.max(0, Math.min(INV_SLOTS - 1, s[6] | 0));
     if (p.hidden >= 0) return;
+    if (p.rootT > 0) { this.sendTo(pid, 'g:correct', [p.x, p.y, p.z]); return; } // caught in a trap
     const now = this.time;
     const dt = Math.max(0.02, now - p.lastT);
     const d = dist(x, z, p.x, p.z);
@@ -356,6 +365,23 @@ export class Game {
     }
   }
 
+  /** Hunt mode: input from the player who is the Headmaster. */
+  onMonsterMove(pid, s) { if (pid === this.hunter && this.monster.human && !this.over) this.monster.onMove(s); }
+  onMonsterAct(pid, m) { if (pid === this.hunter && this.monster.human && !this.over) this.monster.act(m); }
+
+  /**
+   * Voice chat is peer-to-peer, but each client reports how loudly its player is speaking so that
+   * talking has a cost: he can hear you (the AI investigates; a human Headmaster sees where it came from).
+   */
+  onVoice(pid, level) {
+    const p = this.players.get(pid);
+    if (!p || this.over || p.state !== 'alive') return;
+    level = Math.max(0, Math.min(1, Number(level) || 0));
+    if (level < 0.05 || this.time - p.voiceT < 0.3) return;
+    p.voiceT = this.time;
+    this.noise(p.x, p.z, 3.5 + level * 11, p.id, { kind: 'voice' }); // a murmur carries ~4 m, a shout ~14 m — even from inside a locker
+  }
+
   /** A marker everyone on the team can see. Downed players use it to call for help (which he can hear). */
   onPing(pid, m) {
     const p = this.players.get(pid);
@@ -434,6 +460,17 @@ export class Game {
   }
 
   removePlayer(pid) {
+    if (pid === this.hunter && this.monster.human) {
+      // the Headmaster's player left: the AI takes over where he stood, so the match goes on
+      const old = this.monster;
+      for (const t of old.traps) this.emit({ e: 'trap-', id: t.id });
+      this.hunter = null;
+      this.monster = new Monster(this);
+      this.monster.x = old.x; this.monster.z = old.z; this.monster.grace = 4;
+      this.emit({ e: 'hunterleft' });
+      this.announce(`${this.hunterName} disconnected. The Headmaster is on his own now.`, 'bad');
+      return;
+    }
     const p = this.players.get(pid);
     if (!p) return;
     for (const it of p.inv) if (it) this.dropItem(p, it); // never lose objective items to a disconnect
@@ -455,7 +492,8 @@ export class Game {
     if (this.over) return;
     this.over = true;
     const summary = {
-      win, time: Math.round(this.time), stage: this.stage(), obj: this.obj, difficulty: this.difficulty,
+      win, time: Math.round(this.time), stage: this.stage(), obj: this.obj, difficulty: this.difficulty, mode: this.mode,
+      hunter: this.mode === 'hunt' ? { id: this.hunter, name: this.hunterName, hits: this.monster.human ? this.monster.stats.hits : 0 } : null,
       players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, state: p.state, t: p.escapedAt || null, stats: p.stats })),
     };
     this.onEnd(summary);
@@ -470,6 +508,7 @@ export class Game {
 
     const ez = MAP.escapeZone;
     for (const p of this.players.values()) {
+      if (p.rootT > 0) p.rootT -= dt;
       if (p.state === 'alive') {
         // footsteps the monster can hear (bit0 crouch, bit2 sprint, bit3 moving)
         if (p.hidden < 0 && p.flags & 8) {

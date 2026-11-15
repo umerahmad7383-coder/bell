@@ -14,7 +14,8 @@ An online co-op horror game for 2–8 players. You and your friends are locked i
 | Deployed to a public URL | **No.** It was built in a sandbox with no hosting account. Follow [Deploy](#deploy-get-a-public-link) to put it online (about 5 minutes). |
 | Tested between two physically separate PCs over the internet | **No.** Tested with separate browser processes and separate Socket.IO clients against one local server. The networking does not depend on being local, but nobody has yet played it across two networks. [Do that test](#test-between-two-separate-pcs) after deploying. |
 | Frame rate on a real GPU | **Not measured.** The sandbox has no GPU, only a software renderer. In that renderer the optimised build takes about half the time per frame that the first version did on High, but real numbers depend on your graphics card. See [Performance](#performance). |
-| Hunt Mode (player-controlled Headmaster) | **Not built.** The lobby shows it as unavailable. |
+| Hunt Mode (player-controlled Headmaster) | Built. Rules are covered by `test/hunt.js`; balance has not been played by real groups yet. |
+| Voice chat | Built. Connection and audio flow were tested between two browsers on one machine with a fake microphone. **Not tested between real networks or by ear.** |
 
 ## Run it on your own PC
 
@@ -85,6 +86,7 @@ Replace the files in your GitHub repository with the new ones (on the repository
 | `MAX_PLAYERS` | `8` | Lobby size limit (max 8). |
 | `MIN_PLAYERS` | `1` | Players needed to start. `1` allows solo practice; set `2` to force co-op. |
 | `MONSTER_GRACE` | *(from difficulty)* | Seconds at match start before the Headmaster can notice anyone. Overrides the difficulty's own value. |
+| `ICE_SERVERS` | *(none)* | Extra WebRTC servers for voice chat, as JSON. Only needed if some players cannot hear each other: add a TURN relay, e.g. `[{"urls":"turn:host:3478","username":"u","credential":"p"}]`. |
 | `MONSTER_SPEED` | `1` | Extra multiplier on his movement (0.5–1.5), applied on top of the chosen difficulty. |
 
 See `.env.example`. The only client-side setting is `client/config.js`.
@@ -128,7 +130,32 @@ Same-network check without deploying: run `npm start` on one PC, find its local 
 
 > Browsers reserve `Ctrl`+`W` for "close tab" and pages cannot override it. Crouch with `C`, or use Settings → Toggle Fullscreen (Chrome and Edge let the game lock those keys in fullscreen). The game also asks for confirmation before a tab closes mid-match.
 
-**Difficulty** is chosen by the host in the lobby:
+**Voice chat.** In the lobby click **Enable Voice Chat** and allow the microphone. It needs `https://` (the deployed site) or `localhost`.
+
+- In the lobby everyone with voice on hears everyone.
+- In a match it is by proximity: voices come from where the player is standing, fade to nothing at about 22 m, and are quieter and muffled through walls and closed doors.
+- The dead and the escaped hear everybody; the living cannot hear them.
+- **He hears you.** How loudly you speak is reported to the server as noise: a murmur carries about 4 m, a shout about 14 m, even from inside a locker. The AI comes to investigate; a human Headmaster sees a pulse where the voice came from.
+- `M` mutes your microphone. Settings has a push-to-talk option (hold `V`).
+- Audio goes directly between players' browsers; the game server only introduces them. On most home networks that just works. On strict ones (some universities, offices, mobile carriers) two players may fail to connect; that needs a TURN relay set in `ICE_SERVERS`, which this project does not provide.
+
+**Hunt Mode.** The host picks it in the lobby (2+ players). One random player is the Headmaster, never the same person twice running when avoidable; everyone else plays the normal escape. If his player disconnects, the AI takes over.
+
+| The Headmaster can | Limits that keep it fair |
+|---|---|
+| See in the dark (red night vision) | Only about 12 m, and no name tags over survivors |
+| Walk at 3.5 m/s (survivors walk 2.75, sprint 5.3) | Frozen for the first 15 s |
+| Rage: 5.7 m/s while holding `Shift` | Lasts 4 s, about 10 s to recharge |
+| Attack with left click | Half-second wind-up everyone hears; a miss costs 1.6 s; after a hit he cannot attack for 6 s and is slowed for 3.5 s; he cannot hit downed players |
+| Hear footsteps, doors, voices, bottles as pulses through walls | Crouch-walking is silent beyond about a metre; bottles make decoy pulses |
+| Teleport 8 m forward (`R`) | 25 s cooldown, not through walls or closed doors, no strike for 1.2 s after |
+| Set traps (`T`), up to 3 | Arm after 1.5 s; hold for 2.5 s and do no damage; crouch-walking over one is safe; not allowed near the exit |
+| Kill the lights (`Q`): torches near him die for a moment | 45 s cooldown |
+| Force doors and rip open lockers (`E`) | Doors take 0.5 s and he cannot close them; a locker takes 1.4 s standing still |
+
+Survivors can blind him for 2 s by holding a torch beam on his face for 1.2 s (then he is immune for 14 s), and the hand bell stuns him for 6 s. With one or two survivors, they get three hits instead of two. All of these numbers are in one block at the top of `server/hunter.js`.
+
+**Difficulty** is chosen by the host in the lobby (Escape mode only):
 
 | | Beginner | Intermediate | Hard | Nightmare |
 |---|---|---|---|---|
@@ -148,7 +175,7 @@ Same-network check without deploying: run `npm start` on one PC, find its local 
 
 **Horror.** These are the same on every difficulty; difficulty only changes how dangerous the Headmaster is.
 
-- *Jumpscares.* When he hits you, your light dies, your view is wrenched round to him and a face fills the screen with a scream (longer on the hit that puts you down). One time in five it is the second face, `client/assets/scareface.png`; replace or delete that file to change or remove it. Roughly every few minutes the school also plays a fake one on a single player when he is nowhere near.
+- *Jumpscares.* The scream is as loud as the browser can play it: it bypasses the game's limiter and ducks everything else (the volume slider still scales it). When he hits you, your light dies, your view is wrenched round to him and a face fills the screen with a scream (longer on the hit that puts you down). Half the time it is the second face, `client/assets/scareface.png`; replace or delete that file to change or remove it. Roughly every few minutes the school also plays a fake one on a single player when he is nowhere near.
 - *Apparitions.* He appears standing still at a distance, visible only to you. Look at him too long or walk closer and he either vanishes with the lights, or runs at you.
 - *Blackouts.* Your torch dies for a few seconds while something breathes behind you. Sometimes he is there for a blink when it comes back.
 - *Sound.* A constant bed of rumble and dissonant voices; something distant every few seconds (pipes, hinges, moans, doors); a music box; a warped school bell; whispering; your own name spoken (uses the browser's speech voice, where available); lockers banging; clicking in his throat when he is near; a roar and pounding chase music when he sees you; everything goes muffled when you are hurt.
@@ -156,7 +183,7 @@ Same-network check without deploying: run `npm start` on one PC, find its local 
 
 Settings → Jumpscares switches off the face-on-screen scares (including the rushing apparition). The flash is a single brief pulse, not a strobe.
 
-There is no voice chat. Use Discord or similar alongside the built-in text chat.
+Text chat (`Enter`) works alongside voice.
 
 ## What is and is not in this version
 
@@ -164,9 +191,8 @@ Built: four difficulty levels; jumpscares; team pings; an on-screen current obje
 
 Not built, or simplified:
 
-- **Hunt Mode** is not implemented.
 - **No reconnecting into a running match.** If you drop, your items fall where you stood and you can rejoin the lobby for the next round.
-- **No voice chat**, no gamepad or touch controls (keyboard and mouse only).
+- **No gamepad or touch controls** (keyboard and mouse only).
 - **Characters are built from primitive shapes** and animated in code; there are no modelled or motion-captured assets. Textures are painted procedurally at load time.
 - **Basement is reached by stairs but the map is one navigation layer** (no rooms stacked on top of each other).
 - **Movement is client-side with server sanity checks** (speed and wall checks), which is normal for co-op but is not cheat-proof.
@@ -204,6 +230,7 @@ npm test                # all three suites below (needs dev dependencies)
 
 - `test/smoke.js` — starts the real server and drives three real Socket.IO clients through a whole match: lobby rules, movement sync, teleport rejection, door sync, two players grabbing the same item, dropping and sharing, locked doors, the stairs, all six objectives, escape, disconnect during a match, host migration, rematch with re-randomised items.
 - `test/ai.js` — runs the real game simulation headlessly and checks patrol, door opening, chase, attack, retreat, noise investigation, search, hiding rules, the bell, aggression scaling, the four difficulty levels, and the smarter behaviours (prediction, bottle origin, looking under tables, guarding the downed).
+- `test/hunt.js` — Hunt Mode rules: the head start, speed limits and anti-cheat, rage, attack wind-up/dodge/lock-out, teleport, traps, light sabotage, torch and bell stuns, hearing (including voice), and the AI taking over if the Headmaster's player leaves.
 - `test/physics.js` — runs the real Rapier character controller against the real school colliders: walls, the gate, stairs down and up, crawling under tables, lockers.
 - `test/browser-e2e.js` — optional; two real Chrome windows with real key presses (needs Playwright; instructions are at the top of the file).
 
@@ -212,14 +239,16 @@ npm test                # all three suites below (needs dev dependencies)
 ```
 server/index.js      lobbies, room codes, Socket.IO wiring, static file serving
 server/game.js       one match: items, doors, objectives, health, win/loss
-server/monster.js    the Headmaster's state machine
+server/monster.js    the Headmaster's state machine (AI)
+server/hunter.js     the Headmaster when a player controls him (Hunt Mode) and its balance numbers
 client/shared/map.js the school layout, pathfinding and line of sight (used by server AND client)
 client/js/main.js    menu, lobby, settings, match start/stop
 client/js/game.js    rendering loop, first-person controller, interpolation, HUD
 client/js/world.js   builds the school geometry, lights, props, items
 client/js/physics.js Rapier world and character controller
 client/js/entities.js  monster and player models and animation
-client/js/viewmodel.js first-person hands
+client/js/viewmodel.js first-person hands and the jumpscare
+client/js/voice.js   proximity voice chat (WebRTC)
 client/js/items.js   item meshes (world, hands)
 client/shared/defs.js  difficulty levels, item codes, character options
 scripts/floorplan.js   map generator (not served to players)

@@ -11,6 +11,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode = 1; throw new Error(m); } console.log('  ok  -', m); };
 
 let child = null;
+process.on('uncaughtException', (err) => { console.error('FAIL (crash):', err); if (child) child.kill(); process.exit(1); });
 if (!process.env.TEST_URL) {
   child = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, PORT: String(PORT), MONSTER_GRACE: '900' }, stdio: ['ignore', 'pipe', 'inherit'] });
   await new Promise((res) => child.stdout.on('data', (d) => String(d).includes('listening') && res()));
@@ -24,7 +25,7 @@ class Bot {
     this.s.on('lobby:update', (l) => (this.lobby = l));
     this.s.on('game:start', (g) => {
       this.g = g; this.id = g.you; this.over = null;
-      const me = g.players.find((p) => p.id === g.you);
+      const me = g.players.find((p) => p.id === g.you) || { x: g.monster[0], y: 0, z: g.monster[1] }; // in Hunt mode the Headmaster is not in the survivor list
       this.x = me.x; this.y = me.y; this.z = me.z;
       this.items = new Map(g.items.map((i) => [i.id, i]));
       this.doors = g.doors.map(([open, locked]) => ({ open: !!open, locked: !!locked }));
@@ -211,6 +212,32 @@ try {
   const secondItems = JSON.stringify(host.g.items.filter((i) => i.type === 'fuse').map((i) => [i.x, i.z]));
   assert(firstItems !== secondItems, 'item locations are re-randomised for the rematch');
   other.s.disconnect(); c.s.disconnect();
+
+  console.log('VOICE SIGNALLING + HUNT MODE');
+  const d = new Bot('Dee'), e = new Bot('Eli'), f = new Bot('Fay');
+  await sleep(300);
+  const lob = await d.call('lobby:create', { name: 'Dee' });
+  await e.call('lobby:join', { code: lob.code, name: 'Eli' }); await f.call('lobby:join', { code: lob.code, name: 'Fay' });
+  const vj = await d.call('voice:join', null); const vj2 = await e.call('voice:join', null);
+  assert(vj.ok && Array.isArray(vj.ice) && vj.ice.length >= 1 && vj.peers.length === 0 && vj2.peers.length === 1 && vj2.peers[0] === lob.you, 'voice: the server hands out connection servers and tells a newcomer who is already talking');
+  let got = null, leaked = false; d.s.on('rtc', (m) => (got = m)); f.s.on('rtc', () => (leaked = true));
+  e.s.emit('rtc', { to: lob.you, data: { sdp: { type: 'offer', sdp: 'test' } } }); await sleep(150);
+  assert(got && got.data.sdp.type === 'offer' && !leaked, 'voice: handshakes are relayed only to the player they are addressed to');
+  e.s.emit('lobby:mode', 'hunt'); await sleep(100);
+  assert(d.lobby.mode === 'coop', 'a guest cannot change the game mode');
+  d.s.emit('lobby:mode', 'hunt'); await sleep(100);
+  assert(f.lobby.mode === 'hunt', 'the host switches the lobby to Hunt Mode');
+  e.s.emit('lobby:ready', true); f.s.emit('lobby:ready', true); await sleep(100);
+  assert((await d.call('lobby:start')).ok, 'Hunt match starts');
+  await sleep(300);
+  const bots = [d, e, f], hunters = bots.filter((b) => b.g.role === 'monster'), surv = bots.filter((b) => b.g.role === 'survivor');
+  assert(hunters.length === 1 && surv.length === 2 && surv.every((b) => b.g.players.length === 2 && b.g.hunter.id === hunters[0].g.you), 'exactly one player is the Headmaster; the other two are the survivors');
+  const hb = hunters[0]; let hud = null; hb.s.on('g:mhud', (h) => (hud = h)); await sleep(400);
+  assert(hud && hud.grace > 10, `the Headmaster's client receives his status (frozen for ${hud && Math.ceil(hud.grace)} more seconds)`);
+  surv[0].s.emit('g:mstate', [20, 22, 0, 0]); surv[0].s.emit('g:mact', { k: 'tp' }); await sleep(200);
+  const m0 = surv[1].lastSnap.m;
+  assert(Math.abs(m0[0] - 20) > 5, 'a survivor cannot send Headmaster commands');
+  d.s.disconnect(); e.s.disconnect(); f.s.disconnect();
   console.log(process.exitCode ? '\nSOME TESTS FAILED' : '\nALL NETWORK TESTS PASSED');
 } catch (err) {
   console.error(err.message);

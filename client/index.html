@@ -28,6 +28,8 @@
   <div id="roomname"></div>
   <div id="objnow"></div>
   <div id="fps" hidden></div>
+  <div id="mic" hidden></div>
+  <div id="mhud" hidden></div>
   <div id="status"></div>
   <div id="revivebar"><i></i></div>
   <div id="toasts"></div>
@@ -70,7 +72,7 @@
       <div id="conn" class="conn">Connecting to server…</div>
       <div id="gpu-warn" class="error small" hidden></div>
     </div>
-    <div class="foot">2–8 players · headphones strongly recommended · build 0.7</div>
+    <div class="foot">2–8 players · headphones strongly recommended · build 0.8</div>
   </section>
 
   <section id="s-join" class="screen overlay" hidden>
@@ -94,8 +96,8 @@
           <ul id="lobby-players"></ul>
           <h3>Game mode</h3>
           <div class="modes">
-            <label class="mode on"><input type="radio" name="mode" value="coop" checked> <b>Escape (co-op)</b><span>Everyone against the Headmaster.</span></label>
-            <label class="mode off"><input type="radio" name="mode" value="hunt" disabled> <b>Hunt Mode</b><span>One player is the Headmaster. Not built yet.</span></label>
+            <label class="mode on" data-mode="coop"><input type="radio" name="mode" value="coop" checked> <b>Escape (co-op)</b><span>Everyone against the Headmaster.</span></label>
+            <label class="mode" data-mode="hunt"><input type="radio" name="mode" value="hunt"> <b>Hunt Mode</b><span>A random player is the Headmaster; everyone else must escape. Needs 2+ players.</span></label>
           </div>
           <h3>Difficulty <span id="diff-note" class="dim"></span></h3>
           <div id="difficulties" class="modes"></div>
@@ -107,10 +109,12 @@
         </div>
       </div>
       <div id="lobby-note" class="dim small"></div>
+      <div id="voice-note" class="dim small"></div>
       <div id="lobby-error" class="error"></div>
       <div class="row">
         <button id="btn-ready">Ready</button>
         <button id="btn-start" class="primary" hidden>Start Match</button>
+        <button id="btn-voice">Enable Voice Chat</button>
         <button id="btn-lobby-character">Edit Character</button>
         <button id="btn-leave">Leave</button>
       </div>
@@ -143,6 +147,7 @@
       <label class="check"><input id="set-showfps" type="checkbox"> Show frame rate</label>
       <label class="check"><input id="set-togglecrouch" type="checkbox"> Crouch is a toggle (press once) instead of hold</label>
       <label class="check"><input id="set-tips" type="checkbox"> Show control tips at the start of a match</label>
+      <label class="check"><input id="set-ptt" type="checkbox"> Voice chat: push-to-talk (hold V) instead of an open microphone</label>
       <label class="check"><input id="set-jumpscares" type="checkbox"> Jumpscares: a sudden face, a loud scream and a brief flash when he gets you</label>
       <p class="dim small">Graphics quality applies from the next match (anti-aliasing after reloading the page). Everything else applies immediately. If the game still stutters on High, use Medium: it looks close and costs far less.</p>
       <div class="row"><button id="btn-fullscreen">Toggle Fullscreen</button><button data-close class="primary">Done</button></div>
@@ -164,9 +169,11 @@
         <tr><td>Left click</td><td>Use held item</td></tr>
         <tr><td><kbd>G</kbd></td><td>Drop held item (this is how you share)</td></tr>
         <tr><td><kbd>Tab</kbd></td><td>Notebook: objectives and notes</td></tr>
+        <tr><td><kbd>M</kbd> / <kbd>V</kbd></td><td>Voice chat: mute or unmute / push-to-talk (if enabled in Settings)</td></tr>
         <tr><td><kbd>Enter</kbd></td><td>Text chat</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Release mouse / menu</td></tr>
       </table>
+      <p class="dim small"><b>As the Headmaster (Hunt Mode):</b> left click attacks, hold <kbd>Shift</kbd> to rage, <kbd>R</kbd> teleports, <kbd>T</kbd> sets a trap, <kbd>Q</kbd> kills the lights, <kbd>E</kbd> forces doors and rips open lockers.</p>
       <p class="dim small"><b>Careful:</b> browsers reserve <kbd>Ctrl</kbd>+<kbd>W</kbd> for "close tab". Crouch with <kbd>C</kbd>, or play in fullscreen (Settings), where the game can lock those keys in Chrome and Edge.</p>
       <div class="row"><button data-close class="primary">Done</button></div>
     </div>

@@ -157,3 +157,15 @@ table.summary td.stat { color: var(--dim); font-size: 12px; text-align: left; le
 @keyframes grain { 0% { transform: translate(0, 0); } 20% { transform: translate(-60px, 40px); } 40% { transform: translate(70px, -90px); } 60% { transform: translate(-30px, 110px); } 80% { transform: translate(90px, 20px); } 100% { transform: translate(-80px, -50px); } }
 #fx-vignette { background: radial-gradient(ellipse at center, transparent 30%, rgba(0, 0, 0, 0.9) 100%); }
 @media (prefers-reduced-motion: reduce) { #fx-grain { animation: none; } }
+
+/* ---------- voice + hunt mode ---------- */
+#mic { position: absolute; right: 18px; bottom: 40px; font-size: 12px; background: rgba(0, 0, 0, 0.5); padding: 4px 10px; border-right: 2px solid var(--good); color: var(--ink); }
+#mic.off { border-color: #6a2a25; color: var(--dim); } #mic.hot { color: var(--good); }
+#mhud { position: absolute; left: 20px; bottom: 60px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+#mhud b { color: var(--good); margin-left: 6px; font-weight: 600; } #mhud .mstat { font-family: var(--serif); font-size: 20px; letter-spacing: 0.12em; color: var(--blood-hi); margin-bottom: 4px; }
+#mhud kbd { background: rgba(0, 0, 0, 0.6); min-width: 34px; text-align: center; }
+#hud.monster #bar-battery, #hud.monster #health, #hud.monster #inv, #hud.monster #itemhint, #hud.monster #objnow { display: none; }
+#hud.monster #bars { bottom: 20px; } #hud.monster #bar-stamina i { background: var(--blood-hi); }
+.mode[data-mode] { cursor: pointer; } .mode[data-mode].on { border-color: rgba(212, 42, 34, 0.75); background: rgba(163, 18, 15, 0.16); }
+#btn-voice.on { background: rgba(127, 197, 138, 0.2); border-color: rgba(127, 197, 138, 0.6); }
+#lobby-players .v { font-size: 12px; }

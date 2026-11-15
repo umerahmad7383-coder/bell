@@ -4,6 +4,7 @@ import RAPIER from '../vendor/rapier.es.js';
 import { io } from '../vendor/socket.io.esm.min.js';
 import { Game } from './game.js';
 import { AudioSys } from './audio.js';
+import { Voice } from './voice.js';
 import { PLAYER_COLORS, PlayerModel } from './entities.js';
 import { DIFFICULTY, DIFFICULTY_ORDER, LOOKS, LOOK_KEYS, LOOK_LABELS, cleanLook, randomLook } from '../shared/defs.js';
 
@@ -17,16 +18,16 @@ window.addEventListener('error', (e) => console.error('[last-bell]', e.message, 
 
 // ---------------------------------------------------------------- settings
 const store = { get(k, d) { try { const v = localStorage.getItem('lastbell.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('lastbell.' + k, JSON.stringify(v)); } catch { /* private mode */ } } };
-const settings = { sens: 1, vol: 0.8, fov: 75, bright: 1, quality: 'medium', dynres: true, showfps: false, togglecrouch: false, tips: true, jumpscares: true, ...store.get('settings', {}) };
+const settings = { sens: 1, vol: 0.8, fov: 75, bright: 1, quality: 'medium', dynres: true, showfps: false, togglecrouch: false, tips: true, jumpscares: true, ptt: false, ...store.get('settings', {}) };
 const audio = new AudioSys(); audio.volume = settings.vol;
 for (const [id, key, num] of [['set-sens', 'sens', 1], ['set-vol', 'vol', 1], ['set-fov', 'fov', 1], ['set-bright', 'bright', 1], ['set-quality', 'quality', 0]]) {
   const el = $(id); el.value = settings[key];
   el.addEventListener('input', () => { settings[key] = num ? Number(el.value) : el.value; store.set('settings', settings); audio.setVolume(settings.vol); if (game) game.applySettings(); });
 }
 
-for (const [id, key] of [['set-dynres', 'dynres'], ['set-showfps', 'showfps'], ['set-togglecrouch', 'togglecrouch'], ['set-tips', 'tips'], ['set-jumpscares', 'jumpscares']]) {
+for (const [id, key] of [['set-dynres', 'dynres'], ['set-showfps', 'showfps'], ['set-togglecrouch', 'togglecrouch'], ['set-tips', 'tips'], ['set-jumpscares', 'jumpscares'], ['set-ptt', 'ptt']]) {
   const el = $(id); el.checked = !!settings[key];
-  el.addEventListener('change', () => { settings[key] = el.checked; store.set('settings', settings); });
+  el.addEventListener('change', () => { settings[key] = el.checked; store.set('settings', settings); if (key === 'ptt' && voice) voice.setPtt(el.checked); });
 }
 
 // ---------------------------------------------------------------- renderer (one WebGL context for the whole session)
@@ -144,6 +145,24 @@ socket.on('disconnect', () => {
   }
 });
 
+// ---------------------------------------------------------------- voice chat
+const voice = new Voice(socket, audio);
+voice.setPtt(settings.ptt);
+function voiceUi() {
+  const b = $('btn-voice');
+  b.textContent = voice.enabled ? (voice.muted ? 'Voice: muted (click to leave)' : 'Voice Chat ON (click to leave)') : 'Enable Voice Chat';
+  b.classList.toggle('on', voice.enabled);
+  $('voice-note').textContent = voice.enabled ? `Voice: connected to ${voice.connected()} of ${voice.peers.size} other player${voice.peers.size === 1 ? '' : 's'} with voice on. In the match it is proximity-based: people fade with distance and walls, and the Headmaster hears you too. ${settings.ptt ? 'Hold V to talk.' : 'M mutes your mic.'}` : '';
+}
+voice.onChange = voiceUi;
+$('btn-voice').onclick = async () => {
+  if (voice.enabled) { voice.disable(); return; }
+  try { $('voice-note').textContent = 'Asking for the microphone…'; await voice.enable(); }
+  catch (err) { $('voice-note').textContent = err && err.name === 'NotAllowedError' ? 'Microphone permission was refused. Allow it for this site (the padlock icon in the address bar) and try again.' : `Voice chat could not start: ${err.message || err}`; }
+};
+// in the lobby (no match running) everyone with voice on simply hears everyone
+setInterval(() => { if (!game && voice.enabled) voice.frame(0.25, null, null); if (voice.enabled && !$('s-lobby').hidden) voiceUi(); }, 250);
+
 // ---------------------------------------------------------------- menu
 $('btn-create').onclick = () => socket.emit('lobby:create', { name: myName(), look }, (r) => { if (r && r.ok) enterLobby(r); });
 $('btn-solo').onclick = () => socket.emit('lobby:create', { name: myName(), look }, (r) => { if (r && r.ok) { enterLobby(r); socket.emit('lobby:start', null, () => {}); } });
@@ -187,7 +206,8 @@ $('btn-copy-code').onclick = (e) => lobby && copy(lobby.code, e.currentTarget);
 $('btn-leave').onclick = leave;
 $('btn-end-leave').onclick = leave;
 $('btn-quit').onclick = leave;
-function leave() { socket.emit('lobby:leave'); lobby = null; stopGame(); closeOverlays(); show('s-menu'); }
+function leave() { voice.disable(); socket.emit('lobby:leave'); lobby = null; stopGame(); closeOverlays(); show('s-menu'); }
+document.querySelectorAll('.mode[data-mode] input').forEach((inp) => inp.addEventListener('change', () => { if (lobby && lobby.hostId === myId) socket.emit('lobby:mode', inp.value); }));
 $('difficulties').addEventListener('click', (e) => { const el = e.target.closest('[data-diff]'); if (el && lobby && lobby.hostId === myId) socket.emit('lobby:difficulty', el.dataset.diff); });
 $('btn-ready').onclick = () => { const me = lobby && lobby.players.find((p) => p.id === myId); if (me) socket.emit('lobby:ready', !me.ready); };
 $('btn-start').onclick = () => socket.emit('lobby:start', null, (r) => { $('lobby-error').textContent = r && !r.ok ? r.error : ''; });
@@ -210,7 +230,7 @@ socket.on('lobby:update', (l) => {
   const amHost = l.hostId === myId, me = l.players.find((p) => p.id === myId);
   $('lobby-code').textContent = l.code;
   $('lobby-count').textContent = `${l.players.length} / ${l.max}`;
-  $('lobby-players').innerHTML = l.players.map((p, i) => `<li class="${p.id === myId ? 'me' : ''}"><span class="dot" style="background:${LOOKS.top[cleanLook(p.look, i).top]}"></span><span class="nm">${esc(p.name)}${p.id === myId ? ' <span class="dim">(you)</span>' : ''}</span>${p.id === l.hostId ? '<span class="tag host">Host</span>' : p.ready ? '<span class="tag ready">Ready</span>' : '<span class="tag">Not ready</span>'}</li>`).join('');
+  $('lobby-players').innerHTML = l.players.map((p, i) => `<li class="${p.id === myId ? 'me' : ''}"><span class="dot" style="background:${LOOKS.top[cleanLook(p.look, i).top]}"></span><span class="nm">${esc(p.name)}${p.id === myId ? ' <span class="dim">(you)</span>' : ''}</span>${p.voice ? '<span class="v" title="voice chat on">🎙</span>' : ''}${p.id === l.hostId ? '<span class="tag host">Host</span>' : p.ready ? '<span class="tag ready">Ready</span>' : '<span class="tag">Not ready</span>'}</li>`).join('');
   $('btn-start').hidden = !amHost; $('btn-ready').hidden = amHost;
   $('btn-ready').textContent = me && me.ready ? 'Ready ✓ (click to cancel)' : 'Ready up';
   $('btn-ready').classList.toggle('on', !!(me && me.ready));
@@ -218,8 +238,11 @@ socket.on('lobby:update', (l) => {
   $('btn-start').disabled = l.state === 'playing' || waiting > 0;
   $('lobby-note').textContent = l.state === 'playing' ? (me && me.inGame ? '' : 'A match is in progress. You will join the next round when it ends.')
     : amHost ? (waiting ? `Waiting for ${waiting} player${waiting > 1 ? 's' : ''} to ready up.` : l.players.length < 2 ? 'You can start alone to practise, or wait for friends to join.' : 'Everyone is ready.') : 'The host starts the match once everyone is ready.';
+  // game mode: the host picks
+  document.querySelectorAll('.mode[data-mode]').forEach((el) => { const on = el.dataset.mode === l.mode; el.classList.toggle('on', on); el.querySelector('input').checked = on; el.querySelector('input').disabled = !amHost || l.state === 'playing'; });
+  $('difficulties').style.opacity = l.mode === 'hunt' ? 0.35 : 1;
   // difficulty: the host picks, everyone sees it
-  $('diff-note').textContent = amHost ? '' : '(the host chooses)';
+  $('diff-note').textContent = l.mode === 'hunt' ? '(Escape mode only — Hunt has its own balance)' : amHost ? '' : '(the host chooses)';
   $('difficulties').innerHTML = DIFFICULTY_ORDER.map((k) => `<div class="mode${k === l.difficulty ? ' sel' : ''}${amHost && l.state !== 'playing' ? '' : ' locked'}" data-diff="${k}"><b>${DIFFICULTY[k].label}</b><span>${DIFFICULTY[k].blurb}</span></div>`).join('');
   $('btn-rematch').hidden = !amHost;
   $('end-note').textContent = amHost ? '' : 'Waiting for the host to start a rematch…';
@@ -250,7 +273,7 @@ socket.on('game:start', async (init) => {
     await rapierReady;
     await step(45, 'Finding the light switches…');
     audio.init(); audio.resumeAmbience();
-    game = new Game({ renderer, socket, init, settings, audio, RAPIER, ui: { onPause: () => { if (game && !game.ended) overlay('s-pause'); }, blocked: () => OVER.some((o) => !$(o).hidden) } });
+    game = new Game({ renderer, socket, init, settings, audio, RAPIER, voice, ui: { onPause: () => { if (game && !game.ended) overlay('s-pause'); }, blocked: () => OVER.some((o) => !$(o).hidden) } });
     await step(100, 'Something is already inside.');
     show(null);
   } catch (err) {
@@ -262,15 +285,16 @@ socket.on('game:start', async (init) => {
 socket.on('game:over', (sum) => {
   if (!game) return; // joined mid-match: nothing to summarise for this player
   game.end();
-  audio.endJingle(sum.win);
+  audio.endJingle(sum.hunter && sum.hunter.id === myId ? !sum.win : sum.win);
   overlay('s-pause', false);
   const mins = Math.floor(sum.time / 60), secs = String(sum.time % 60).padStart(2, '0');
   const escaped = sum.players.filter((p) => p.state === 'escaped').length;
-  $('end-title').textContent = sum.win ? (escaped === sum.players.length ? 'EVERYONE ESCAPED' : 'ESCAPED') : 'CLASS IS NOT DISMISSED';
-  $('end-title').classList.toggle('lose', !sum.win);
-  const diff = DIFFICULTY[sum.difficulty] ? ` Difficulty: ${DIFFICULTY[sum.difficulty].label}.` : '';
+  const iAmHunter = sum.hunter && sum.hunter.id === myId;
+  $('end-title').textContent = iAmHunter ? (sum.win ? 'THEY GOT AWAY' : 'CLASS IS NOT DISMISSED') : sum.win ? (escaped === sum.players.length ? 'EVERYONE ESCAPED' : 'ESCAPED') : 'CLASS IS NOT DISMISSED';
+  $('end-title').classList.toggle('lose', iAmHunter ? sum.win : !sum.win);
+  const diff = sum.mode === 'hunt' ? ' Hunt Mode.' : DIFFICULTY[sum.difficulty] ? ` Difficulty: ${DIFFICULTY[sum.difficulty].label}.` : '';
   $('end-sub').textContent = (sum.win ? `${escaped} of ${sum.players.length} made it out in ${mins}:${secs}.` : `Nobody left the school. You lasted ${mins}:${secs} and completed ${sum.stage} of 6 steps.`) + diff;
-  $('end-table').innerHTML = sum.players.map((p) => `<tr><td>${esc(p.name)}${p.id === myId ? ' <span class="dim">(you)</span>' : ''}</td><td class="stat">${statLine(p.stats)}</td><td class="st-${p.state === 'escaped' ? 'escaped' : 'dead'}">${p.state === 'escaped' ? `Survived · out at ${Math.floor(p.t / 60)}:${String(p.t % 60).padStart(2, '0')}` : 'Did not survive'}</td></tr>`).join('');
+  $('end-table').innerHTML = (sum.hunter ? `<tr><td>${esc(sum.hunter.name)}${iAmHunter ? ' <span class="dim">(you)</span>' : ''}</td><td class="stat">landed ${sum.hunter.hits} hit${sum.hunter.hits === 1 ? '' : 's'}</td><td class="st-dead">The Headmaster</td></tr>` : '') + sum.players.map((p) => `<tr><td>${esc(p.name)}${p.id === myId ? ' <span class="dim">(you)</span>' : ''}</td><td class="stat">${statLine(p.stats)}</td><td class="st-${p.state === 'escaped' ? 'escaped' : 'dead'}">${p.state === 'escaped' ? `Survived · out at ${Math.floor(p.t / 60)}:${String(p.t % 60).padStart(2, '0')}` : 'Did not survive'}</td></tr>`).join('');
   setTimeout(() => overlay('s-end'), 1200);
 });
 

@@ -346,10 +346,23 @@ export class AudioSys {
   /** Jumpscare: silence for a heartbeat, then a human scream torn apart by distortion. long = the hit that puts you down. */
   jumpscare(long = false) {
     if (!this.ctx) return;
-    this.ensureShaper();
     const ctx = this.ctx, t = ctx.currentTime + 0.02, dur = long ? 1.6 : 1.05;
-    const env = ctx.createGain(); env.connect(this.shaper);
-    env.gain.setValueAtTime(0.0001, t); env.gain.linearRampToValueAtTime(1.2, t + 0.01); env.gain.setValueAtTime(1.2, t + dur * 0.6); env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    // LOUDNESS: the scream has its own path straight to the speakers. It skips the master volume
+    // stage and the compressor (which exists precisely to stop things being this loud), is clipped
+    // to full scale, and everything else is ducked underneath it. The volume slider still scales it.
+    if (!this.scareBus) {
+      const sh = ctx.createWaveShaper(); const n = 2048, curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(x * 9); }
+      sh.curve = curve; sh.oversample = '2x';
+      this.scareOut = ctx.createGain(); sh.connect(this.scareOut); this.scareOut.connect(ctx.destination);
+      this.scareBus = sh;
+    }
+    this.scareOut.gain.value = Math.min(1, 0.3 + this.volume * 0.9);
+    this.master.gain.cancelScheduledValues(t); this.master.gain.setValueAtTime(this.volume * 0.2, t); this.master.gain.setValueAtTime(this.volume * 0.2, t + dur * 0.8); this.master.gain.linearRampToValueAtTime(this.volume, t + dur + 0.6);
+    const env = ctx.createGain(); env.connect(this.scareBus);
+    env.gain.setValueAtTime(0.0001, t); env.gain.linearRampToValueAtTime(2.2, t + 0.008); env.gain.setValueAtTime(2.2, t + dur * 0.65); env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    // a full-scale sub drop on the same loud path
+    const sub = ctx.createOscillator(), sg = ctx.createGain(); sub.frequency.setValueAtTime(72, t); sub.frequency.exponentialRampToValueAtTime(30, t + 0.5); sg.gain.setValueAtTime(1.2, t); sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.6); sub.connect(sg); sg.connect(env); sub.start(t); sub.stop(t + 0.65);
     // 1) the scream itself: a voice (sawtooth through vowel formants) that cracks upward and breaks
     const v = ctx.createOscillator(); v.type = 'sawtooth';
     v.frequency.setValueAtTime(520, t); v.frequency.exponentialRampToValueAtTime(1180, t + 0.09); v.frequency.setValueAtTime(1180, t + dur * 0.45); v.frequency.exponentialRampToValueAtTime(640, t + dur);
