@@ -117,7 +117,8 @@ Same-network check without deploying: run `npm start` on one PC, find its local 
 | `Shift` | Sprint (drains stamina; loud) |
 | `Ctrl` or `C` | Crouch (quiet, harder to see, fits under tables) |
 | `E` | Interact: doors, items, lockers, fuse box, console, revive |
-| `F` | Flashlight |
+| `F` or right click | Flashlight on / off (the HUD shows ON / OFF) |
+| `Q` or middle click | Ping what you are looking at for your team; when downed, call for help (he can hear it) |
 | `1`–`4`, mouse wheel | Select inventory slot |
 | Left click | Use held item |
 | `G` | Drop held item (how you hand things to teammates) |
@@ -149,7 +150,7 @@ There is no voice chat. Use Discord or similar alongside the built-in text chat.
 
 ## What is and is not in this version
 
-Built: four difficulty levels; a character creator; first-person body and hands; private lobbies with six-character codes, invite links, ready states, host start, host migration, rematch in the same lobby, disconnect handling, spectating after death or escape; the full school on one connected map (main hall, four corridors, three classrooms, science lab, library with a hidden room behind a loose bookshelf, cafeteria, gym, bathroom, storage, security office with a live monitor map, staff room, locked principal's office, stairwell, basement, cellar, boiler room, courtyard and exit gate); 20 doors plus the bookshelf and the gate; 20 lockers; the six-state monster AI plus a "stalk" behaviour; randomised item placement; inventory with drop/share; hiding, wounding, downing, reviving; power and lighting states; randomised paranormal events; procedural 3D audio; text chat; settings.
+Built: four difficulty levels; team pings; an on-screen current objective and item hints; start-of-match control tips; optional toggle-crouch; per-player stats on the end screen; a character creator; first-person body and hands; private lobbies with six-character codes, invite links, ready states, host start, host migration, rematch in the same lobby, disconnect handling, spectating after death or escape; the full school on one connected map (main hall, four corridors, three classrooms, science lab, library with a hidden room behind a loose bookshelf, cafeteria, gym, bathroom, storage, security office with a live monitor map, staff room, locked principal's office, stairwell, basement, cellar, boiler room, courtyard and exit gate); 20 doors plus the bookshelf and the gate; 20 lockers; the six-state monster AI plus a "stalk" behaviour; randomised item placement; inventory with drop/share; hiding, wounding, downing, reviving; power and lighting states; randomised paranormal events; procedural 3D audio; text chat; settings.
 
 Not built, or simplified:
 

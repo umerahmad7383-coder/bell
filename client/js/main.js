@@ -17,14 +17,14 @@ window.addEventListener('error', (e) => console.error('[last-bell]', e.message, 
 
 // ---------------------------------------------------------------- settings
 const store = { get(k, d) { try { const v = localStorage.getItem('lastbell.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('lastbell.' + k, JSON.stringify(v)); } catch { /* private mode */ } } };
-const settings = { sens: 1, vol: 0.8, fov: 75, bright: 1, quality: 'medium', dynres: true, showfps: false, ...store.get('settings', {}) };
+const settings = { sens: 1, vol: 0.8, fov: 75, bright: 1, quality: 'medium', dynres: true, showfps: false, togglecrouch: false, tips: true, ...store.get('settings', {}) };
 const audio = new AudioSys(); audio.volume = settings.vol;
 for (const [id, key, num] of [['set-sens', 'sens', 1], ['set-vol', 'vol', 1], ['set-fov', 'fov', 1], ['set-bright', 'bright', 1], ['set-quality', 'quality', 0]]) {
   const el = $(id); el.value = settings[key];
   el.addEventListener('input', () => { settings[key] = num ? Number(el.value) : el.value; store.set('settings', settings); audio.setVolume(settings.vol); if (game) game.applySettings(); });
 }
 
-for (const [id, key] of [['set-dynres', 'dynres'], ['set-showfps', 'showfps']]) {
+for (const [id, key] of [['set-dynres', 'dynres'], ['set-showfps', 'showfps'], ['set-togglecrouch', 'togglecrouch'], ['set-tips', 'tips']]) {
   const el = $(id); el.checked = !!settings[key];
   el.addEventListener('change', () => { settings[key] = el.checked; store.set('settings', settings); });
 }
@@ -270,10 +270,19 @@ socket.on('game:over', (sum) => {
   $('end-title').classList.toggle('lose', !sum.win);
   const diff = DIFFICULTY[sum.difficulty] ? ` Difficulty: ${DIFFICULTY[sum.difficulty].label}.` : '';
   $('end-sub').textContent = (sum.win ? `${escaped} of ${sum.players.length} made it out in ${mins}:${secs}.` : `Nobody left the school. You lasted ${mins}:${secs} and completed ${sum.stage} of 6 steps.`) + diff;
-  $('end-table').innerHTML = sum.players.map((p) => `<tr><td>${esc(p.name)}${p.id === myId ? ' <span class="dim">(you)</span>' : ''}</td><td class="st-${p.state === 'escaped' ? 'escaped' : 'dead'}">${p.state === 'escaped' ? `Survived · out at ${Math.floor(p.t / 60)}:${String(p.t % 60).padStart(2, '0')}` : 'Did not survive'}</td></tr>`).join('');
+  $('end-table').innerHTML = sum.players.map((p) => `<tr><td>${esc(p.name)}${p.id === myId ? ' <span class="dim">(you)</span>' : ''}</td><td class="stat">${statLine(p.stats)}</td><td class="st-${p.state === 'escaped' ? 'escaped' : 'dead'}">${p.state === 'escaped' ? `Survived · out at ${Math.floor(p.t / 60)}:${String(p.t % 60).padStart(2, '0')}` : 'Did not survive'}</td></tr>`).join('');
   setTimeout(() => overlay('s-end'), 1200);
 });
 
+function statLine(st) {
+  if (!st) return '';
+  const parts = [];
+  if (st.fuses) parts.push(`${st.fuses} fuse${st.fuses > 1 ? 's' : ''} found`);
+  if (st.revives) parts.push(`${st.revives} revive${st.revives > 1 ? 's' : ''}`);
+  if (st.thrown) parts.push(`${st.thrown} bottle${st.thrown > 1 ? 's' : ''} thrown`);
+  parts.push(st.hits ? `hit ${st.hits}×` : 'never hit');
+  return parts.join(' · ');
+}
 function stopGame() { if (game) { game.dispose(); game = null; } audio.stopAmbience(); }
 
 show('s-menu');

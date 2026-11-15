@@ -142,3 +142,11 @@ table.summary td:last-child { text-align: right; letter-spacing: 0.14em; text-tr
 .opt .pick { display: flex; gap: 5px; flex-wrap: wrap; }
 .opt .pick button { padding: 5px 9px; font-size: 11px; letter-spacing: 0.06em; text-transform: none; }
 .opt .pick button.sel { background: rgba(163, 18, 15, 0.4); border-color: rgba(212, 42, 34, 0.7); color: #fff; }
+
+/* ---------- torch state, current objective, item hint, pings ---------- */
+#torch-state { font-weight: 700; color: #d8c98a; } #torch-state.off { color: #7a7668; }
+.bar kbd { font-size: 9px; padding: 0 4px; margin-left: 2px; }
+#objnow { position: absolute; left: 20px; top: 66px; max-width: 360px; font-size: 12.5px; color: rgba(217, 212, 199, 0.8); border-left: 2px solid var(--blood-hi); padding-left: 8px; transition: color 0.6s; }
+#objnow.new { color: #fff; }
+#itemhint { position: absolute; left: 50%; bottom: 90px; transform: translateX(-50%); font-size: 12.5px; color: rgba(217, 212, 199, 0.85); white-space: nowrap; transition: opacity 0.8s; }
+table.summary td.stat { color: var(--dim); font-size: 12px; text-align: left; letter-spacing: 0; text-transform: none; }

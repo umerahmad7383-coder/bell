@@ -180,6 +180,7 @@ io.on('connection', (socket) => {
   socket.on('g:interact', (m) => game()?.onInteract(socket.data.pid, m));
   socket.on('g:use', (m) => game()?.onUse(socket.data.pid, m));
   socket.on('g:drop', (slot) => game()?.onDrop(socket.data.pid, slot));
+  socket.on('g:ping', (m) => game()?.onPing(socket.data.pid, m));
 
   socket.on('disconnect', () => leaveLobby(socket));
 });

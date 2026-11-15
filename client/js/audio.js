@@ -207,6 +207,12 @@ export class AudioSys {
       this.tone({ freq: 196, to: 98, dur: 2, type: 'triangle', gain: 0.08, attack: 0.3, wet: 1 });
     }
   }
+  ping(pos, help) {
+    if (help) { this.tone({ freq: 620, to: 380, dur: 0.7, type: 'sawtooth', gain: 0.22, pos, vibrato: 28, wet: 1 }); this.noise({ dur: 0.6, type: 'bandpass', freq: 1300, q: 2, gain: 0.2, pos, attack: 0.1 }); return; }
+    this.tone({ freq: 1320, dur: 0.09, gain: 0.16, pos, wet: 0.4 }); this.tone({ freq: 1760, dur: 0.16, gain: 0.14, pos, when: 0.09, wet: 0.4 });
+  }
+  pant() { this.noise({ dur: 0.28, type: 'bandpass', freq: 900, q: 1.2, gain: 0.11, attack: 0.09, wet: 0 }); this.noise({ dur: 0.22, type: 'bandpass', freq: 600, q: 1.2, gain: 0.07, attack: 0.08, when: 0.3, wet: 0 }); }
+  beep() { this.tone({ freq: 980, dur: 0.08, type: 'square', gain: 0.05, wet: 0 }); this.tone({ freq: 980, dur: 0.08, type: 'square', gain: 0.05, when: 0.16, wet: 0 }); }
   heal() { this.tone({ freq: 440, to: 660, dur: 0.5, type: 'triangle', gain: 0.12, wet: 0.4 }); }
   endJingle(win) {
     const notes = win ? [392, 494, 587, 784] : [220, 208, 185, 147];

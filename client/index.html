@@ -25,6 +25,7 @@
   <div id="crosshair"></div>
   <div id="prompt"></div>
   <div id="roomname"></div>
+  <div id="objnow"></div>
   <div id="fps" hidden></div>
   <div id="status"></div>
   <div id="revivebar"><i></i></div>
@@ -32,9 +33,10 @@
   <div id="teamlist"></div>
   <div id="bars">
     <div class="bar" id="bar-stamina"><span>STAMINA</span><div><i></i></div></div>
-    <div class="bar" id="bar-battery"><span>TORCH</span><div><i></i></div></div>
+    <div class="bar" id="bar-battery"><span>TORCH <b id="torch-state">ON</b> <kbd>F</kbd></span><div><i></i></div></div>
     <div id="health"></div>
   </div>
+  <div id="itemhint"></div>
   <div id="inv"></div>
   <div id="chat"><div id="chatlog"></div><input id="chatinput" maxlength="160" placeholder="Say something… (Enter to send, Esc to cancel)" hidden></div>
   <div id="notebook" hidden>
@@ -45,7 +47,7 @@
     <div id="notes"><p class="dim">Nothing yet. Notes are shared with everyone when picked up.</p></div>
     <p class="dim small">Hold TAB to read · He hears running · Crouch (C) to stay quiet · Lockers and tables hide you</p>
   </div>
-  <div id="hint">TAB notebook · ENTER chat · ESC menu</div>
+  <div id="hint">F torch · Q ping · TAB notebook · ENTER chat · ESC menu</div>
 </div>
 
 <!-- ======================= SCREENS ======================= -->
@@ -138,6 +140,8 @@
       </label>
       <label class="check"><input id="set-dynres" type="checkbox"> Keep it smooth: lower the render resolution automatically when the frame rate drops</label>
       <label class="check"><input id="set-showfps" type="checkbox"> Show frame rate</label>
+      <label class="check"><input id="set-togglecrouch" type="checkbox"> Crouch is a toggle (press once) instead of hold</label>
+      <label class="check"><input id="set-tips" type="checkbox"> Show control tips at the start of a match</label>
       <p class="dim small">Graphics quality applies from the next match (anti-aliasing after reloading the page). Everything else applies immediately. If the game still stutters on High, use Medium: it looks close and costs far less.</p>
       <div class="row"><button id="btn-fullscreen">Toggle Fullscreen</button><button data-close class="primary">Done</button></div>
     </div>
@@ -152,7 +156,8 @@
         <tr><td><kbd>Shift</kbd></td><td>Sprint (uses stamina — and he hears it)</td></tr>
         <tr><td><kbd>Ctrl</kbd> or <kbd>C</kbd></td><td>Crouch (quiet, harder to see, fits under tables)</td></tr>
         <tr><td><kbd>E</kbd></td><td>Interact: doors, items, lockers, revive</td></tr>
-        <tr><td><kbd>F</kbd></td><td>Flashlight</td></tr>
+        <tr><td><kbd>F</kbd> or right click</td><td>Flashlight on / off</td></tr>
+        <tr><td><kbd>Q</kbd> or middle click</td><td>Ping what you are looking at for your team (when downed: call for help)</td></tr>
         <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>Select inventory slot</td></tr>
         <tr><td>Left click</td><td>Use held item</td></tr>
         <tr><td><kbd>G</kbd></td><td>Drop held item (this is how you share)</td></tr>

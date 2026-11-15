@@ -41,6 +41,7 @@ class Bot {
       else if (e.e === 'obj') this.obj = e.obj;
       else if (e.e === 'msg') this.msgs.push(e.text);
       else if (e.e === 'pstate') this.states.set(e.id, e.state);
+      else if (e.e === 'ping') (this.pings ||= []).push(e);
     });
   }
   call(ev, data) { return new Promise((res) => this.s.emit(ev, data, res)); }
@@ -124,6 +125,12 @@ try {
   await sleep(120);
   assert(b.doors[MAP.doorAt[idx(13, 14)]].open && c.doors[MAP.doorAt[idx(13, 14)]].open, 'a door opened by Ana is open for everyone');
 
+  // pings
+  a.s.emit('g:ping', { x: a.x + 3, y: 1, z: a.z }); a.s.emit('g:ping', { x: a.x + 4, y: 1, z: a.z }); await sleep(150);
+  assert(b.pings && b.pings.length === 1 && b.pings[0].by === a.id, 'a ping reaches teammates, and spamming is rate-limited');
+  a.s.emit('g:ping', { x: 9999, y: 0, z: 0 }); await sleep(1400); a.s.emit('g:ping', { x: 9999, y: 0, z: 0 }); await sleep(150);
+  assert(b.pings.length === 1, 'a ping far outside the map is rejected');
+
   console.log('OBJECTIVES');
   // pick-up race: two players grab the same item, only one may get it
   const fuse0 = [...a.items.values()].find((i) => i.type === 'fuse');
@@ -187,6 +194,7 @@ try {
   await sleep(500);
   assert(other.over && other.over.win === true, 'disconnect handled: match ends, summary says the survivors won');
   assert(other.over.players.filter((p) => p.state === 'escaped').length === 2, 'summary lists who survived');
+  assert(other.over.players.every((p) => p.stats && typeof p.stats.hits === 'number'), 'summary includes per-player stats');
   await sleep(100);
   assert(other.lobby.players.length === 2 && other.lobby.state === 'ended', 'lobby survives the disconnect with 2 players');
 

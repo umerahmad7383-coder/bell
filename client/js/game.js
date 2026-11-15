@@ -1,8 +1,8 @@
 // One match on the client: rendering, local first-person controller, interpolation of
 // everyone else, interaction, effects and HUD. All game rules live on the server.
 import * as THREE from 'three';
-import { MAP, floorY, lineOfSight, roomNameAt } from '../shared/map.js';
-import { buildTextures } from './textures.js';
+import { MAP, W, floorY, ceilY, inBounds, lineOfSight, roomNameAt } from '../shared/map.js';
+import { buildTextures, nameTexture } from './textures.js';
 import { buildWorld } from './world.js';
 import { buildPhysics, EYE_STAND, EYE_CROUCH, EYE_DOWNED } from './physics.js';
 import { MonsterModel, PlayerModel, PLAYER_COLORS } from './entities.js';
@@ -14,6 +14,16 @@ export const QUALITY = {
   low: { maxDpr: 1, scale: 0.75, shadows: false, shadowSize: 0, lights: 2, darkLights: 1, spots: 1, gloss: false },
   medium: { maxDpr: 1, scale: 1, shadows: true, shadowSize: 1024, lights: 4, darkLights: 2, spots: 2, gloss: false },
   high: { maxDpr: 1.5, scale: 1, shadows: true, shadowSize: 2048, lights: 6, darkLights: 2, spots: 3, gloss: true },
+};
+export const ITEM_HINT = {
+  fuse: 'Fuse — carry it to the fuse box in the Boiler Room and press E',
+  key_principal: "Office Key — press E on the Principal's Office door",
+  key_gate: 'Gate Key — press E on the main gate once its lock is disarmed',
+  battery: 'Battery — left click to recharge your torch',
+  medkit: 'Med Kit — left click to heal yourself, or next to a downed teammate to revive them at once',
+  lockpick: 'Lockpick — press E on a locked door to pick it (one use)',
+  bottle: 'Bottle — left click to throw it; he goes to the noise',
+  bell: 'Hand Bell — left click to ring it; drives him off once',
 };
 export const ITEM_INFO = {
   fuse: ['Fuse', '⚡'], key_principal: ['Office Key', '🗝️'], key_gate: ['Gate Key', '🔑'], battery: ['Battery', '🔋'],
@@ -82,6 +92,13 @@ export class Game {
     });
     this.me = this.roster.get(this.id);
     this.maxHp = init.maxHp || 2; this.difficulty = init.difficulty || 'intermediate';
+    this.crouchLatch = false;
+    this.tips = settings.tips ? [
+      [4, 'F (or right click) switches your torch on and off. It makes you much easier to see.'],
+      [13, 'Hold TAB for the notebook. Crouch with C to move quietly. He hears running.'],
+      [22, 'Q pings whatever you are looking at so your team can find it.'],
+      [31, 'E opens doors, picks things up and hides you in lockers.'],
+    ] : [];
     this.frame = 0; this.prevYaw = -Math.PI / 2; this.prevPitch = 0;
     if (Q.shadows) renderer.shadowMap.autoUpdate = false; // refreshed every second frame in the loop: halves the shadow cost
 
@@ -128,7 +145,10 @@ export class Game {
       this.audio.init();
       if (!this.locked) { this.lock(); return; }
       if (e.button === 0) this.primary();
+      else if (e.button === 2) this.toggleFlash();
+      else if (e.button === 1) { e.preventDefault(); this.ping(); }
     });
+    on(canvas, 'contextmenu', (e) => e.preventDefault());
     on(document, 'wheel', (e) => { if (this.locked) this.select((this.sel + (e.deltaY > 0 ? 1 : 3)) % 4); }, { passive: true });
     on(document, 'pointerlockchange', () => {
       this.locked = document.pointerLockElement === canvas;
@@ -161,6 +181,8 @@ export class Game {
     if (c === 'Enter') { e.preventDefault(); this.openChat(); }
     else if (c === 'KeyE') this.interact();
     else if (c === 'KeyF') this.toggleFlash();
+    else if (c === 'KeyQ') this.ping();
+    else if ((c === 'KeyC' || c === 'ControlLeft' || c === 'ControlRight') && this.set.togglecrouch) this.crouchLatch = !this.crouchLatch;
     else if (c === 'KeyG') { if (this.inv[this.sel]) this.s.emit('g:drop', this.sel); }
     else if (/^Digit[1-4]$/.test(c)) this.select(Number(c[5]) - 1);
   }
@@ -169,6 +191,47 @@ export class Game {
     if (this.me.state !== 'alive' && this.me.state !== 'downed') return;
     if (this.battery <= 0) { this.toast('Your torch is dead. Find a battery.', 'warn'); this.audio.deny(); return; }
     this.flashOn = !this.flashOn; this.audio.click();
+    this.updateHud();
+  }
+  /** Mark what you are looking at for the whole team. Downed: call for help instead. */
+  ping() {
+    const me = this.me;
+    if (this.ended) return;
+    if (me.state === 'downed') { this.s.emit('g:ping', {}); return; }
+    if (me.state !== 'alive' || me.hidden >= 0) return;
+    if (this.target && this.target.k === 'item') { this.s.emit('g:ping', { item: this.target.id }); return; }
+    const c = this.cam.position, cp = Math.cos(this.pitch);
+    const fx = -Math.sin(this.yaw) * cp, fy = Math.sin(this.pitch), fz = -Math.cos(this.yaw) * cp;
+    let x = c.x, y = c.y, z = c.z;
+    for (let t = 0.4; t <= 26; t += 0.25) { // walk along the view ray until it meets a wall, a closed door, the floor or the ceiling
+      const nx = c.x + fx * t, ny = c.y + fy * t, nz = c.z + fz * t, cx = Math.floor(nx), cz = Math.floor(nz);
+      if (!inBounds(cx, cz) || MAP.grid[cz * W + cx] === 0) break;
+      const di = MAP.doorAt[cz * W + cx];
+      if (di >= 0 && !this.world.doors[di].open) break;
+      if (ny < floorY(nx, nz) + 0.05 || ny > ceilY(cx, cz) - 0.05) break;
+      x = nx; y = ny; z = nz;
+    }
+    this.s.emit('g:ping', { x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2) });
+  }
+  showPing(e) {
+    const p = this.roster.get(e.by), name = p ? p.name : '?';
+    const color = PLAYER_COLORS[(p ? p.color : 7) % 8];
+    const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.T.glow, color, transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const tex = nameTexture(e.help ? `${name}: HELP!` : e.item ? `${name}: ${ITEM_INFO[e.item][0]}` : name, e.help ? '#ff6a5e' : color);
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }));
+    dot.position.set(e.p[0], e.p[1], e.p[2]); label.position.set(e.p[0], e.p[1], e.p[2]);
+    dot.renderOrder = 20; label.renderOrder = 21;
+    this.scene.add(dot, label);
+    let t = 0;
+    this.fx.push((dt) => { // visible through walls for a few seconds, sized so it reads at any distance
+      t += dt;
+      const d = this.cam.position.distanceTo(dot.position), s = 0.25 + d * 0.045, fade = Math.min(1, (6.5 - t) * 1.2);
+      dot.scale.setScalar(s * (1.2 + Math.sin(t * 7) * 0.25)); dot.material.opacity = 0.9 * fade;
+      label.scale.set(s * 3.4, s * 0.85, 1); label.position.y = e.p[1] + s * 0.9; label.material.opacity = fade;
+      if (t > 6.5) { this.scene.remove(dot, label); dot.material.dispose(); tex.dispose(); label.material.dispose(); return true; }
+    });
+    this.audio.ping(e.p, !!e.help);
+    if (e.help && e.by !== this.id) this.toast(`${name} is calling for help!`, 'bad');
   }
   primary() {
     if (this.me.state === 'dead' || this.me.state === 'escaped') return this.cycleSpectate();
@@ -258,6 +321,7 @@ export class Game {
       case 'battery': this.battery = 100; this.flashOn = true; A.click(); this.toast('Fresh battery fitted.', 'good'); break;
       case 'mstate': this.onMonsterState(e.s); break;
       case 'para': this.paranormal(e); break;
+      case 'ping': this.showPing(e); break;
     }
   }
 
@@ -393,7 +457,8 @@ export class Game {
     const downed = me.state === 'downed';
     let fwd = 0, strafe = 0;
     if (controllable && !this.chatOpen && !this.ui.blocked()) { fwd = (K.KeyW || K.ArrowUp ? 1 : 0) - (K.KeyS || K.ArrowDown ? 1 : 0); strafe = (K.KeyD || K.ArrowRight ? 1 : 0) - (K.KeyA || K.ArrowLeft ? 1 : 0); }
-    const wantCrouch = downed || K.ControlLeft || K.ControlRight || K.KeyC;
+    const wantCrouch = downed || (this.set.togglecrouch ? this.crouchLatch : K.ControlLeft || K.ControlRight || K.KeyC);
+    if (this.exhausted && !downed) { this.pantT = (this.pantT || 0) - dt; if (this.pantT <= 0) { this.pantT = 0.62; this.audio.pant(); } }
     const crouch = controllable && (wantCrouch || (ph.isCrouched() && ph.lowCeiling()));
     if (controllable) ph.setCrouch(!!crouch);
     const moving = fwd !== 0 || strafe !== 0;
@@ -559,7 +624,9 @@ export class Game {
     // torch
     const canLight = (me.state === 'alive' || me.state === 'downed') && me.hidden < 0;
     if (this.flashOn && canLight && this.battery > 0) {
+      const before = this.battery;
       this.battery = Math.max(0, this.battery - (100 / 360) * dt);
+      if (before >= 15 && this.battery < 15) { this.toast('Torch battery is low.', 'warn'); this.audio.beep(); }
       if (this.battery <= 0) { this.toast('Your torch is dead. Find a battery.', 'warn'); this.audio.click(); }
     }
     let fi = this.flashOn && canLight && this.battery > 0 ? 1 : 0;
@@ -656,6 +723,8 @@ export class Game {
   }
   renderInv() {
     $('inv').innerHTML = this.inv.map((it, i) => `<div class="slot${i === this.sel ? ' sel' : ''}"><span class="num">${i + 1}</span>${it ? `<span class="ico">${ITEM_INFO[it.type][1]}</span>${ITEM_INFO[it.type][0]}` : ''}</div>`).join('');
+    const cur = this.inv[this.sel];
+    $('itemhint').textContent = cur ? ITEM_HINT[cur.type] || '' : '';
   }
   renderNotebook() {
     const o = this.obj;
@@ -668,6 +737,9 @@ export class Game {
       ['Unlock the main gate at the west end of the Main Hall — and run', o.gateOpen],
     ];
     const cur = list.findIndex((l) => !l[1]);
+    const now = cur >= 0 ? `▸ ${list[cur][0]}` : '▸ The gate is open. Get out.';
+    const on = $('objnow');
+    if (on.textContent !== now) { on.textContent = now; on.classList.add('new'); setTimeout(() => on.classList.remove('new'), 3000); }
     $('objectives').innerHTML = list.map(([t, done], i) => `<li class="${done ? 'done' : i === cur ? 'cur' : ''}">${esc(t)}</li>`).join('');
     $('notes').innerHTML = this.notes.length ? this.notes.map((n) => `<p>${esc(n)}</p>`).join('') : '<p class="dim">Nothing yet. Notes are shared with everyone when picked up.</p>';
   }
@@ -677,6 +749,9 @@ export class Game {
   updateHud() {
     const me = this.me;
     const st = $('bar-stamina'), bt = $('bar-battery');
+    const ts = $('torch-state'), lit = this.flashOn && this.battery > 0;
+    ts.textContent = lit ? 'ON' : this.battery <= 0 ? 'DEAD' : 'OFF'; ts.classList.toggle('off', !lit);
+    while (this.tips.length && this.time >= this.tips[0][0]) this.toast(this.tips.shift()[1]);
     st.querySelector('i').style.width = `${this.stamina}%`; st.classList.toggle('low', this.exhausted);
     bt.querySelector('i').style.width = `${this.battery}%`; bt.classList.toggle('low', this.battery < 14);
     const h = $('health'); h.textContent = me.state === 'alive' ? (me.hp >= this.maxHp ? (this.maxHp === 1 ? 'One hit and you fall' : 'Unhurt') : me.hp === 1 ? 'Wounded — one more and you fall' : 'Hurt') : ''; h.classList.toggle('hurt', me.hp < this.maxHp);
@@ -724,7 +799,7 @@ export class Game {
     this.vm.dispose(); this.r.shadowMap.autoUpdate = true;
     this.r.renderLists.dispose();
     try { this.ph.world.free(); } catch { /* already freed */ }
-    $('hud').hidden = true; $('fx-locker').classList.remove('on'); $('fx-static').style.display = 'none'; $('fx-hurt').style.display = 'none'; $('fps').hidden = true; $('toasts').innerHTML = ''; $('chatlog').innerHTML = ''; $('status').innerHTML = ''; $('notebook').hidden = true;
+    $('hud').hidden = true; $('fx-locker').classList.remove('on'); $('fx-static').style.display = 'none'; $('fx-hurt').style.display = 'none'; $('fps').hidden = true; $('toasts').innerHTML = ''; $('chatlog').innerHTML = ''; $('status').innerHTML = ''; $('notebook').hidden = true; $('objnow').textContent = ''; $('itemhint').textContent = '';
     if (window.__lb === this) window.__lb = null;
   }
 }

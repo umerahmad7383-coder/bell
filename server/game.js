@@ -38,7 +38,8 @@ export class Game {
       this.players.set(pl.pid, {
         id: pl.pid, name: pl.name, look: cleanLook(pl.look, i), x: s.x, y: 0, z: s.z, ry: Math.PI / 2 * -1, rx: 0, flags: 0,
         hp: this.maxHp, state: 'alive', inv: new Array(INV_SLOTS).fill(null), hidden: -1, bleed: 0,
-        lastT: 0, stepT: 0, reviving: null, vx: 0, vz: 0, sel: 0,
+        lastT: 0, stepT: 0, reviving: null, vx: 0, vz: 0, sel: 0, pingT: -9,
+        stats: { fuses: 0, revives: 0, hits: 0, thrown: 0 },
       });
     });
     this.spawnItems();
@@ -226,7 +227,7 @@ export class Game {
         this.emit({ e: 'item-', id, by: p.id });
         this.sendInv(p);
         if (it.type === 'fuse' && !it.counted) {
-          it.counted = true; this.obj.fusesFound++;
+          it.counted = true; this.obj.fusesFound++; p.stats.fuses++;
           this.announce(`${p.name} found a fuse (${this.obj.fusesFound}/3).`, 'good'); this.objChanged();
         } else if (it.type === 'key_gate' && !this.obj.gateKey) {
           this.obj.gateKey = true; this.announce(`${p.name} took the gate key.`, 'good'); this.objChanged();
@@ -320,6 +321,7 @@ export class Game {
         break;
       }
       case 'bottle': {
+        p.stats.thrown++;
         // server decides where it lands
         const ry = Number(m.ry) || p.ry, rx = Math.max(-1, Math.min(1, Number(m.rx) || 0));
         const range = Math.max(3, Math.min(13, 9 + rx * 7));
@@ -354,6 +356,25 @@ export class Game {
     }
   }
 
+  /** A marker everyone on the team can see. Downed players use it to call for help (which he can hear). */
+  onPing(pid, m) {
+    const p = this.players.get(pid);
+    if (!p || this.over || !m || (p.state !== 'alive' && p.state !== 'downed')) return;
+    if (this.time - p.pingT < 1.2) return; // no spamming
+    p.pingT = this.time;
+    if (p.state === 'downed') {
+      this.emit({ e: 'ping', by: p.id, p: [r2(p.x), r2(p.y + 0.4), r2(p.z)], help: 1 });
+      this.noise(p.x, p.z, 9, p.id);
+      return;
+    }
+    if (p.hidden >= 0) return;
+    const it = m.item ? this.items.get(m.item | 0) : null;
+    let x = Number(m.x), y = Number(m.y), z = Number(m.z);
+    if (it) { x = it.x; y = it.y + 0.15; z = it.z; }
+    if (![x, y, z].every(Number.isFinite) || dist(x, z, p.x, p.z) > 32 || Math.abs(y - p.y) > 6) return;
+    this.emit({ e: 'ping', by: p.id, p: [r2(x), r2(y), r2(z)], item: it ? it.type : null });
+  }
+
   onDrop(pid, slot) {
     const p = this.players.get(pid);
     if (!p || this.over || p.hidden >= 0 || (p.state !== 'alive' && p.state !== 'downed')) return;
@@ -386,6 +407,7 @@ export class Game {
   // ---------- health ----------
   hitPlayer(p) {
     if (p.state !== 'alive') return;
+    p.stats.hits++;
     p.hp -= 1;
     p.reviving = null;
     if (p.hp <= 0) {
@@ -397,6 +419,7 @@ export class Game {
     this.checkEnd();
   }
   revive(t, hp, by) {
+    by.stats.revives++;
     t.state = 'alive'; t.hp = hp; t.bleed = 0;
     this.emit({ e: 'pstate', id: t.id, state: 'alive', hp });
     this.announce(`${by.name} got ${t.name} back on their feet.`, 'good');
@@ -433,7 +456,7 @@ export class Game {
     this.over = true;
     const summary = {
       win, time: Math.round(this.time), stage: this.stage(), obj: this.obj, difficulty: this.difficulty,
-      players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, state: p.state, t: p.escapedAt || null })),
+      players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, state: p.state, t: p.escapedAt || null, stats: p.stats })),
     };
     this.onEnd(summary);
   }
