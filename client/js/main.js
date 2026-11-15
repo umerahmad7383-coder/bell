@@ -17,14 +17,14 @@ window.addEventListener('error', (e) => console.error('[last-bell]', e.message, 
 
 // ---------------------------------------------------------------- settings
 const store = { get(k, d) { try { const v = localStorage.getItem('lastbell.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('lastbell.' + k, JSON.stringify(v)); } catch { /* private mode */ } } };
-const settings = { sens: 1, vol: 0.8, fov: 75, bright: 1, quality: 'medium', dynres: true, showfps: false, togglecrouch: false, tips: true, ...store.get('settings', {}) };
+const settings = { sens: 1, vol: 0.8, fov: 75, bright: 1, quality: 'medium', dynres: true, showfps: false, togglecrouch: false, tips: true, jumpscares: true, ...store.get('settings', {}) };
 const audio = new AudioSys(); audio.volume = settings.vol;
 for (const [id, key, num] of [['set-sens', 'sens', 1], ['set-vol', 'vol', 1], ['set-fov', 'fov', 1], ['set-bright', 'bright', 1], ['set-quality', 'quality', 0]]) {
   const el = $(id); el.value = settings[key];
   el.addEventListener('input', () => { settings[key] = num ? Number(el.value) : el.value; store.set('settings', settings); audio.setVolume(settings.vol); if (game) game.applySettings(); });
 }
 
-for (const [id, key] of [['set-dynres', 'dynres'], ['set-showfps', 'showfps'], ['set-togglecrouch', 'togglecrouch'], ['set-tips', 'tips']]) {
+for (const [id, key] of [['set-dynres', 'dynres'], ['set-showfps', 'showfps'], ['set-togglecrouch', 'togglecrouch'], ['set-tips', 'tips'], ['set-jumpscares', 'jumpscares']]) {
   const el = $(id); el.checked = !!settings[key];
   el.addEventListener('change', () => { settings[key] = el.checked; store.set('settings', settings); });
 }

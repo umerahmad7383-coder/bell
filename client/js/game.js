@@ -87,7 +87,7 @@ export class Game {
         this.ph.teleport(p.x, p.y, p.z);
         // your own body (headless, so the camera is not inside a skull) and first-person hands
         this.body = new PlayerModel(p.name, i, p.look, { firstPerson: true }); scene.add(this.body.group);
-        this.vm = new ViewModel(p.look);
+        this.vm = new ViewModel(p.look, this.T);
       }
     });
     this.me = this.roster.get(this.id);
@@ -193,6 +193,18 @@ export class Game {
     this.flashOn = !this.flashOn; this.audio.click();
     this.updateHud();
   }
+  /**
+   * The Headmaster's face fills the screen with a scream. `real` = he actually hit you (the view
+   * snaps round to him); otherwise it is one of the school's rare tricks. Can be switched off in Settings.
+   */
+  jumpscare(long, real) {
+    if (!this.set.jumpscares) return;
+    const dur = long ? 1.0 : 0.6;
+    this.vm.startScare(dur);
+    this.audio.jumpscare(long);
+    this.shake = Math.max(this.shake, 1.6); this.scareFlash = 0.16; this.scareStatic = dur;
+    if (real) { const f = this.lastFeet; this.snapYaw = { to: Math.atan2(-(this.m.x - f.x), -(this.m.z - f.z)), t: 0.14 }; }
+  }
   /** Mark what you are looking at for the whole team. Downed: call for help instead. */
   ping() {
     const me = this.me;
@@ -297,7 +309,7 @@ export class Game {
         this.roster.delete(e.id); if (this.spec === e.id) this.spec = null; this.renderTeam(); break;
       }
       case 'hit':
-        if (e.id === this.id) { A.hit(); this.shake = 1; this.hurtFlash = 1; }
+        if (e.id === this.id) { A.hit(); this.shake = 1; this.hurtFlash = 1; this.jumpscare(this.me.hp <= 1, true); }
         else { const r = this.remotes.get(e.id); if (r) { A.noise({ dur: 0.3, freq: 400, gain: 1.4, pos: [r.cur.x, r.cur.y + 1, r.cur.z] }); A.tone({ freq: 520, to: 300, dur: 0.5, type: 'sawtooth', gain: 0.2, pos: [r.cur.x, r.cur.y + 1.5, r.cur.z], vibrato: 30 }); } }
         break;
       case 'hide': {
@@ -348,6 +360,7 @@ export class Game {
   paranormal(e) {
     const A = this.audio, p = e.p;
     switch (e.type) {
+      case 'jump': this.world.flicker(1.5); this.flickerOwn = 0.9; this.jumpscare(false, false); break; // not really there. Probably.
       case 'flicker': this.world.flicker(2.2); this.flickerOwn = 1.2; A.noise({ dur: 0.5, type: 'highpass', freq: 4000, gain: 0.08, wet: 0 }); break;
       case 'whisper': A.whisper([p[0], p[1] + 1.5, p[2]]); break;
       case 'scream': A.scream([p[0], p[1] + 1.5, p[2]]); break;
@@ -531,7 +544,7 @@ export class Game {
     }
     const held = this.inv[this.sel];
     this.vm.setHeld(firstPerson && !downed && held ? held.type : null);
-    this.vmActive = firstPerson;
+    this.vmActive = firstPerson || this.vm.scaring;
     const dyaw = this.yaw - this.prevYaw, dpitch = this.pitch - this.prevPitch; this.prevYaw = this.yaw; this.prevPitch = this.pitch;
     this.vm.update(dt, {
       active: firstPerson, flash: lit, speed: real, sprint: this.sprinting, crouch, bob: (this.bobT / (crouch ? 1.0 : sprint ? 2.1 : 1.5)) * Math.PI,
@@ -651,7 +664,15 @@ export class Game {
     // screen distortion
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 0.8);
     const hurt = me.state === 'downed' ? 0.85 + Math.sin(this.time * 3) * 0.1 : me.state === 'alive' && me.hp < this.maxHp ? (me.hp === 1 ? 0.35 : 0.16) + Math.sin(this.time * 2.2) * 0.06 : 0;
-    const st = clamp(this.threat * this.threat * 0.42 + this.hurtFlash * 0.6, 0, 0.7);
+    if (this.vm.scaring !== this._scaring) { this._scaring = this.vm.scaring; $('hud').classList.toggle('scare', this._scaring); } // nothing on screen but him
+    if (this.scareStatic > 0) this.scareStatic -= dt;
+    if (this.scareFlash > 0) { this.scareFlash -= dt; $('fx-flash').style.opacity = Math.max(0, this.scareFlash / 0.16) * 0.3; } // one brief flash, not a strobe
+    if (this.snapYaw) { // a real hit wrenches your view round to face him
+      const sn = this.snapYaw; sn.t -= dt;
+      this.yaw = lerpAngle(this.yaw, sn.to, Math.min(1, dt * 22)); this.pitch = lerp(this.pitch, 0.12, Math.min(1, dt * 22));
+      if (sn.t <= 0) this.snapYaw = null;
+    }
+    const st = clamp(this.threat * this.threat * 0.42 + this.hurtFlash * 0.6 + (this.scareStatic > 0 ? 0.5 : 0), 0, 0.7);
     const q = Math.round(st * 40) / 40, hq = Math.round(Math.max(hurt, this.hurtFlash) * 30) / 30;
     // PERFORMANCE: these overlays only ever change `opacity`, which the browser composites on the GPU
     // without repainting. (CSS filters / blend modes on top of a WebGL canvas cost a full-screen pass.)
@@ -799,7 +820,7 @@ export class Game {
     this.vm.dispose(); this.r.shadowMap.autoUpdate = true;
     this.r.renderLists.dispose();
     try { this.ph.world.free(); } catch { /* already freed */ }
-    $('hud').hidden = true; $('fx-locker').classList.remove('on'); $('fx-static').style.display = 'none'; $('fx-hurt').style.display = 'none'; $('fps').hidden = true; $('toasts').innerHTML = ''; $('chatlog').innerHTML = ''; $('status').innerHTML = ''; $('notebook').hidden = true; $('objnow').textContent = ''; $('itemhint').textContent = '';
+    $('hud').hidden = true; $('fx-locker').classList.remove('on'); $('fx-static').style.display = 'none'; $('fx-hurt').style.display = 'none'; $('fps').hidden = true; $('toasts').innerHTML = ''; $('chatlog').innerHTML = ''; $('status').innerHTML = ''; $('notebook').hidden = true; $('hud').classList.remove('scare'); $('fx-flash').style.opacity = 0; $('objnow').textContent = ''; $('itemhint').textContent = '';
     if (window.__lb === this) window.__lb = null;
   }
 }

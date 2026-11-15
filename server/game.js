@@ -521,6 +521,13 @@ export class Game {
     const alive = [...this.players.values()].filter((p) => p.state === 'alive');
     if (!alive.length) return;
     const p = pick(alive);
+    // Rarely, the school plays a trick on ONE player: a jumpscare with nothing actually there.
+    // Never when he is genuinely close (that would muddle the real warning signs), never twice in quick succession.
+    if (this.time > 60 && Math.random() < 0.14) {
+      const m = this.monster;
+      const marks = alive.filter((q) => q.hidden < 0 && this.time - (q.jumpT ?? -999) > 150 && dist(q.x, q.z, m.x, m.z) > 18);
+      if (marks.length) { const q = pick(marks); q.jumpT = this.time; this.emitTo(q, { e: 'para', type: 'jump' }); return; }
+    }
     const type = pick(['flicker', 'slam', 'whisper', 'scream', 'fall', 'thunder', 'thunder', 'steps', 'knock', 'shadow', 'clang']);
     const around = (min, max) => {
       for (let i = 0; i < 12; i++) {

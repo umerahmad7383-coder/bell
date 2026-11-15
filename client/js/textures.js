@@ -174,6 +174,28 @@ export function buildTextures() {
     speckle(c, w, h, 1200, 0.3, 0.05);
   }, false);
 
+  // Close-up face used only for the jumpscare (laid out for a sphere: the front is at u = 0.25).
+  T.scare = make(1024, 512, (c, w, h) => {
+    c.fillStyle = '#a9a595'; c.fillRect(0, 0, w, h);
+    stains(c, w, h, 60, '50,40,35', 0.35, 90);
+    const fx = w * 0.25, fy = h * 0.5;
+    const hollow = (x, y, rx, ry, rot = 0) => { c.save(); c.translate(x, y); c.rotate(rot); const g = c.createRadialGradient(0, 0, 2, 0, 0, Math.max(rx, ry)); g.addColorStop(0, '#000'); g.addColorStop(0.55, '#020101'); g.addColorStop(0.8, 'rgba(25,8,8,0.9)'); g.addColorStop(1, 'rgba(40,15,12,0)'); c.fillStyle = g; c.scale(rx / Math.max(rx, ry), ry / Math.max(rx, ry)); c.beginPath(); c.arc(0, 0, Math.max(rx, ry), 0, 6.28); c.fill(); c.restore(); };
+    // dark bruising around everything
+    const sh = c.createRadialGradient(fx, fy, 30, fx, fy, 230); sh.addColorStop(0, 'rgba(0,0,0,0)'); sh.addColorStop(1, 'rgba(0,0,0,0.75)'); c.fillStyle = sh; c.fillRect(0, 0, w / 2, h);
+    hollow(fx - 66, fy - 62, 44, 70, 0.12); hollow(fx + 60, fy - 50, 38, 82, -0.08);       // eye sockets, uneven
+    c.fillStyle = '#f4f2e6'; c.beginPath(); c.arc(fx - 68, fy - 60, 5, 0, 6.28); c.fill(); c.beginPath(); c.arc(fx + 60, fy - 46, 4, 0, 6.28); c.fill(); // pin-prick pupils
+    hollow(fx - 4, fy + 6, 12, 24);                                                           // nose cavity
+    hollow(fx, fy + 128, 70, 118);                                                            // the mouth, unhinged
+    c.fillStyle = '#d9d2b8';
+    for (let i = 0; i < 9; i++) { const tx = fx - 52 + i * 13 + R(-2, 2), th = R(16, 34); c.beginPath(); c.moveTo(tx, fy + 44 + Math.abs(i - 4) * 5); c.lineTo(tx + 9, fy + 44 + Math.abs(i - 4) * 5); c.lineTo(tx + 4.5 + R(-2, 2), fy + 44 + Math.abs(i - 4) * 5 + th); c.fill(); }
+    for (let i = 0; i < 8; i++) { const tx = fx - 44 + i * 12 + R(-2, 2), th = R(12, 26), by = fy + 226 - Math.abs(i - 3.5) * 9; c.beginPath(); c.moveTo(tx, by); c.lineTo(tx + 8, by); c.lineTo(tx + 4 + R(-2, 2), by - th); c.fill(); }
+    c.strokeStyle = 'rgba(50,10,10,0.75)'; c.lineWidth = 2;
+    for (let i = 0; i < 40; i++) { c.beginPath(); let x = fx + R(-150, 150), y = fy + R(-200, 220); c.moveTo(x, y); for (let k = 0; k < 5; k++) { x += R(-16, 16); y += R(6, 26); c.lineTo(x, y); } c.stroke(); } // veins and cracks
+    c.strokeStyle = 'rgba(20,0,0,0.85)'; c.lineWidth = 3;
+    for (const sx of [-1, 1]) for (let i = 0; i < 5; i++) { c.beginPath(); const x = fx + sx * 62 + R(-22, 22); c.moveTo(x, fy + R(0, 20)); c.lineTo(x + R(-8, 8), fy + R(60, 150)); c.stroke(); } // tracks running down from the eyes
+    speckle(c, w / 2, h, 5000, 0.3, 0.05);
+  }, false);
+
   T.uniform = make(128, 128, (c, w, h) => {
     c.fillStyle = '#17171b'; c.fillRect(0, 0, w, h);
     stains(c, w, h, 14, '70,60,45', 0.25, 40);

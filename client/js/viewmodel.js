@@ -14,7 +14,7 @@ const POSE = {
 };
 
 export class ViewModel {
-  constructor(look) {
+  constructor(look, T) {
     look = cleanLook(look);
     this.scene = new THREE.Scene();
     this.cam = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.01, 4);
@@ -47,6 +47,21 @@ export class ViewModel {
     this.L.add(body, headM, this.lens);
     this.holder = new THREE.Group(); this.R.add(this.holder);
 
+    // --- jumpscare rig: the Headmaster's face and hands, right in yours ---
+    const sc = (this.scare = new THREE.Group()); sc.visible = false; this.scene.add(sc);
+    this.scareMat = new THREE.MeshBasicMaterial({ map: T.scare });
+    this.skull = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 28), this.scareMat); this.skull.scale.set(0.17, 0.27, 0.19); sc.add(this.skull); // the sphere's textured front already faces the camera (+Z)
+    const cloth = new THREE.MeshBasicMaterial({ color: 0x0b0b0d }), bone = new THREE.MeshBasicMaterial({ color: 0x8f8a7a });
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.7, 0.24), cloth); torso.position.set(0, -0.62, 0.06); sc.add(torso);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 0.2, 8), bone); neck.position.set(0, -0.3, 0.02); sc.add(neck);
+    this.claws = [-1, 1].map((sx) => {
+      const g = new THREE.Group();
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 0.7, 7), bone); arm.rotation.x = Math.PI / 2; arm.position.z = -0.38; g.add(arm);
+      for (let i = 0; i < 5; i++) { const f = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.3, 5), bone); f.rotation.x = Math.PI / 2 - 0.25; f.rotation.z = (i - 2) * 0.22 * sx; f.position.set((i - 2) * 0.03, 0.02, 0.13); g.add(f); }
+      sc.add(g); return { g, sx };
+    });
+    this.scareT = 0; this.scareDur = 0;
+
     this.held = null; this.pendingHeld = undefined;
     this.showL = 0; this.showR = 0; this.reachT = 0; this.use = null; this.swayX = 0; this.swayY = 0; this.runK = 0;
   }
@@ -61,6 +76,29 @@ export class ViewModel {
     group.position.set(p[0], p[1], p[2]); group.rotation.set(p[3], p[4], 0); group.scale.setScalar(p[5]);
     this.holder.add(group);
   }
+  /** The face lunges into the camera for `dur` seconds. */
+  startScare(dur) { this.scareT = dur; this.scareDur = dur; }
+  get scaring() { return this.scareT > 0; }
+  updateScare(dt) {
+    const sc = this.scare;
+    if (this.scareT <= 0) { sc.visible = false; return; }
+    this.scareT -= dt;
+    const t = this.scareDur - this.scareT;                       // seconds since it started
+    const lunge = 1 - Math.pow(1 - Math.min(1, t / 0.09), 3);      // arrives in under a tenth of a second
+    const out = Math.max(0, 1 - this.scareT / 0.08);              // last frames: straight through you
+    const j = () => (Math.random() - 0.5);
+    sc.visible = true;
+    sc.position.set(j() * 0.035, 0.015 + j() * 0.03, lerp(-2.6, -0.6, lunge) + out * 0.45);
+    sc.rotation.set(j() * 0.1, j() * 0.12, j() * 0.3 + Math.sin(t * 50) * 0.08);
+    const stretch = 1 + Math.abs(Math.sin(t * 34)) * 0.22;        // the jaw keeps opening
+    this.skull.scale.set(0.17, 0.27 * stretch, 0.19);
+    this.skull.position.y = -0.27 * (stretch - 1) * 0.5;
+    this.scareMat.color.setScalar(0.75 + Math.random() * 0.6);    // flickers like a failing bulb
+    for (const c of this.claws) {
+      c.g.position.set(c.sx * lerp(0.8, 0.36, lunge) + j() * 0.02, -0.16 + j() * 0.02, lerp(0.1, 0.3, lunge));
+      c.g.rotation.set(0.25 + j() * 0.1, -c.sx * 0.55, c.sx * 0.3);
+    }
+  }
   /** the right hand reaches out (doors, pick-ups, switches) */
   reach() { this.reachT = 0.3; }
   /** play the animation for using the held item */
@@ -71,8 +109,10 @@ export class ViewModel {
     const k = (r) => Math.min(1, dt * r);
     if (this.reachT > 0) this.reachT -= dt;
     if (this.use) { this.use.t += dt; if (this.use.t >= this.use.dur) { this.use = null; if (this.pendingHeld !== undefined) { const h = this.pendingHeld; this.pendingHeld = undefined; this.setHeld(h); } } }
-    const wantL = s.active && s.flash ? 1 : 0;
-    const wantR = s.active && (this.held || this.reachT > 0 || this.use) ? 1 : 0;
+    this.updateScare(dt);
+    const hands = s.active && !this.scaring;
+    const wantL = hands && s.flash ? 1 : 0;
+    const wantR = hands && (this.held || this.reachT > 0 || this.use) ? 1 : 0;
     this.showL = lerp(this.showL, wantL, k(9)); this.showR = lerp(this.showR, wantR, k(11));
     this.runK = lerp(this.runK, s.sprint ? 1 : 0, k(6));
     // the hands lag slightly behind the view when you turn
@@ -88,7 +128,7 @@ export class ViewModel {
       const h = 1 - this.showL, g = this.L;
       g.position.set(-0.185 + this.swayX - bobX, -0.2 - h * 0.34 + this.swayY + bobY + idle - run * 0.05 - (s.crouch ? 0.0 : 0), -0.4 + h * 0.08);
       g.rotation.set(h * 0.8 + run * 0.25 + bobY * 2, -0.14 + this.swayX * 2 + Math.sin(s.bob) * 0.03 * run, 0.12 + run * 0.2);
-      g.visible = this.showL > 0.02;
+      g.visible = this.showL > 0.02 && !this.scaring;
       this.lens.material.color.setHex(s.flash ? 0xfff2c0 : 0x2a2a26);
     }
     // right hand + item
@@ -106,7 +146,7 @@ export class ViewModel {
       }
       g.position.set(px + this.swayX + bobX, py - h * 0.34 + this.swayY - bobY + idle - run * 0.05, pz + h * 0.08);
       g.rotation.set(rx + h * 0.8 + run * 0.25 - bobY * 2, ry + this.swayX * 2 - Math.sin(s.bob) * 0.03 * run, rz - run * 0.2);
-      g.visible = this.showR > 0.02;
+      g.visible = this.showR > 0.02 && !this.scaring;
     }
     // brightness follows the surroundings: your torch spill, powered lights, lightning
     const l = clamp(s.light, 0.12, 2);

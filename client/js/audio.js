@@ -213,6 +213,32 @@ export class AudioSys {
   }
   pant() { this.noise({ dur: 0.28, type: 'bandpass', freq: 900, q: 1.2, gain: 0.11, attack: 0.09, wet: 0 }); this.noise({ dur: 0.22, type: 'bandpass', freq: 600, q: 1.2, gain: 0.07, attack: 0.08, when: 0.3, wet: 0 }); }
   beep() { this.tone({ freq: 980, dur: 0.08, type: 'square', gain: 0.05, wet: 0 }); this.tone({ freq: 980, dur: 0.08, type: 'square', gain: 0.05, when: 0.16, wet: 0 }); }
+  /** Jumpscare: a distorted, layered shriek. long = the hit that puts you down. */
+  jumpscare(long = false) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime, dur = long ? 1.25 : 0.75;
+    if (!this.shaper) { // hard clipping makes it harsh instead of merely loud
+      this.shaper = ctx.createWaveShaper();
+      const n = 1024, curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(x * 6); }
+      this.shaper.curve = curve; this.shaper.oversample = '2x';
+      const g = ctx.createGain(); g.gain.value = 0.55; this.shaper.connect(g); g.connect(this.master);
+      const w = ctx.createGain(); w.gain.value = 0.25; g.connect(w); w.connect(this.wet);
+    }
+    const env = ctx.createGain(); env.connect(this.shaper);
+    env.gain.setValueAtTime(0.0001, t); env.gain.linearRampToValueAtTime(1, t + 0.012); env.gain.setValueAtTime(1, t + dur * 0.55); env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    for (const f of [392, 421, 587, 803, 1190]) { // a dissonant cluster that jumps up, then sags
+      const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sawtooth'; g.gain.value = 0.22;
+      o.frequency.setValueAtTime(f * 0.6, t); o.frequency.exponentialRampToValueAtTime(f * 1.9, t + 0.07); o.frequency.exponentialRampToValueAtTime(f * 1.25, t + dur);
+      const l = ctx.createOscillator(), lg = ctx.createGain(); l.frequency.value = 19 + Math.random() * 14; lg.gain.value = f * 0.09; l.connect(lg); lg.connect(o.frequency);
+      o.connect(g); g.connect(env); o.start(t); l.start(t); o.stop(t + dur + 0.05); l.stop(t + dur + 0.05);
+    }
+    const n = ctx.createBufferSource(); n.buffer = this.white; n.loop = true;
+    const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.setValueAtTime(900, t); nf.frequency.exponentialRampToValueAtTime(4200, t + 0.1); nf.Q.value = 0.8;
+    const ng = ctx.createGain(); ng.gain.value = 0.7; n.connect(nf); nf.connect(ng); ng.connect(env); n.start(t); n.stop(t + dur + 0.05);
+    this.tone({ freq: 60, to: 28, dur: 0.5, gain: 1.3, wet: 0 });       // the thump in your chest
+    this.noise({ dur: 0.12, freq: 300, gain: 1.4, wet: 0.2 });
+  }
   heal() { this.tone({ freq: 440, to: 660, dur: 0.5, type: 'triangle', gain: 0.12, wet: 0.4 }); }
   endJingle(win) {
     const notes = win ? [392, 494, 587, 784] : [220, 208, 185, 147];
