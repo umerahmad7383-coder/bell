@@ -3,7 +3,7 @@
 const R = (a, b) => a + Math.random() * (b - a);
 
 export class AudioSys {
-  constructor() { this.ctx = null; this.volume = 0.8; this.threat = 0; this.hbT = 0; this.monsterGain = null; }
+  constructor() { this.ctx = null; this.volume = 0.8; this.threat = 0; this.hbT = 0; this.monsterGain = null; this.lpos = { x: 0, y: 0, z: 0 }; this.lyaw = 0; this.ambT = 6; this.chaseK = 0; this.chaseT = 0; this.beat = 0; this.croakT = 5; }
 
   /** Must be called from a user gesture (browser autoplay rules). */
   init() {
@@ -13,7 +13,9 @@ export class AudioSys {
     const ctx = (this.ctx = new AC());
     const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 6;
     this.master = ctx.createGain(); this.master.gain.value = this.volume;
-    this.master.connect(comp); comp.connect(ctx.destination);
+    // everything passes through one low-pass, closed down when you are hurt so the world goes muffled
+    this.lp = ctx.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = 20000;
+    this.master.connect(this.lp); this.lp.connect(comp); comp.connect(ctx.destination);
     // cheap "empty building" reverb: two feedback delays behind a low-pass
     this.wet = ctx.createGain(); this.wet.gain.value = 0.35;
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1800;
@@ -36,6 +38,7 @@ export class AudioSys {
 
   setListener(p, yaw) {
     if (!this.ctx) return;
+    this.lpos = { x: p.x, y: p.y, z: p.z }; this.lyaw = yaw;
     const l = this.ctx.listener, fx = -Math.sin(yaw), fz = -Math.cos(yaw);
     if (l.positionX) { l.positionX.value = p.x; l.positionY.value = p.y; l.positionZ.value = p.z; l.forwardX.value = fx; l.forwardY.value = 0; l.forwardZ.value = fz; l.upX.value = 0; l.upY.value = 1; l.upZ.value = 0; }
     else { l.setPosition(p.x, p.y, p.z); l.setOrientation(fx, 0, fz, 0, 1, 0); }
@@ -88,6 +91,16 @@ export class AudioSys {
     const df = ctx.createBiquadFilter(); df.type = 'lowpass'; df.frequency.value = 160; df.connect(dg);
     this.loops.drone = [43.6, 46.2, 65.1].map((fq) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = fq; o.connect(df); o.start(); return o; });
     this.loops.droneGain = dg;
+    // sub-bass rumble you feel more than hear, and a cold, slowly beating cluster of voices over it
+    this.loops.rumble = loop(this.brown, 'lowpass', 55, 0.7, 0.5);
+    const pg = ctx.createGain(); pg.gain.value = 0.5; pg.connect(this.wet); const pd = ctx.createGain(); pd.gain.value = 0.25; pg.connect(pd); pd.connect(this.master);
+    for (const [fq, rate] of [[110, 0.05], [116.5, 0.07], [164.8, 0.043], [174.6, 0.061], [233.1, 0.036], [329.6, 0.029]]) {
+      const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = fq;
+      const g = ctx.createGain(); g.gain.value = 0.012;
+      const l = ctx.createOscillator(), lg = ctx.createGain(); l.frequency.value = rate; lg.gain.value = 0.012; l.connect(lg); lg.connect(g.gain); l.start();
+      o.connect(g); g.connect(pg); o.start();
+    }
+    this.loops.pad = pg;
     // static that rises when the Headmaster is close
     this.loops.static = loop(this.white, 'highpass', 2500, 0.5, 0);
     // mains hum once the power is on
@@ -110,7 +123,9 @@ export class AudioSys {
   }
   stopAmbience() {
     if (!this.ctx) return;
-    for (const k of ['rain', 'wind', 'static']) if (this.loops[k]) this.loops[k].g.gain.value = 0;
+    for (const k of ['rain', 'wind', 'static', 'rumble']) if (this.loops[k]) this.loops[k].g.gain.value = 0;
+    if (this.loops.pad) this.loops.pad.gain.value = 0;
+    if (this.lp) this.lp.frequency.value = 20000;
     if (this.loops.droneGain) this.loops.droneGain.gain.value = 0;
     if (this.loops.hum) this.loops.hum.gain.value = 0;
     if (this.monsterGain) this.monsterGain.gain.value = 0;
@@ -118,13 +133,35 @@ export class AudioSys {
   }
   resumeAmbience() {
     if (!this.ctx || !this.loops.rain) return this.startAmbience();
-    this.loops.rain.g.gain.value = 0.035; this.loops.wind.g.gain.value = 0.12; this.loops.droneGain.gain.value = 0.05; this.muted = false;
+    this.loops.rain.g.gain.value = 0.035; this.loops.wind.g.gain.value = 0.12; this.loops.droneGain.gain.value = 0.05; this.loops.rumble.g.gain.value = 0.5; this.loops.pad.gain.value = 0.5; this.muted = false;
   }
 
-  /** Called every frame. threat 0..1, monster {x,y,z,state,speed} or null. */
-  update(dt, threat, monster, power) {
+  /** Called every frame. threat 0..1, monster {x,y,z,state,speed,d} or null, muffle = low-pass cutoff in Hz. */
+  update(dt, threat, monster, power, muffle = 20000) {
     if (!this.ctx || this.muted) return;
     const t = this.ctx.currentTime;
+    this.lp.frequency.setTargetAtTime(muffle, t, 0.25);
+    // the building is never quiet: something far off every few seconds
+    this.ambT -= dt;
+    if (this.ambT <= 0) { this.ambT = 5 + Math.random() * 11; this.randomAmbient(); }
+    // chase: a pounding pulse with shrill stabs over it, fading in and out with the pursuit
+    const chasing = !!monster && (monster.state === 3 || monster.state === 4) && monster.d < 34;
+    this.chaseK += ((chasing ? 1 : 0) - this.chaseK) * Math.min(1, dt * (chasing ? 5 : 0.7));
+    if (this.chaseK > 0.08) {
+      this.chaseT -= dt;
+      if (this.chaseT <= 0) {
+        this.chaseT = 0.34; this.beat++;
+        const g = this.chaseK;
+        this.tone({ freq: 60, to: 34, dur: 0.24, gain: 0.85 * g, wet: 0.1 }); this.noise({ dur: 0.05, freq: 220, gain: 0.55 * g, wet: 0 });
+        if (this.beat % 2 === 0) for (const f of [932, 988, 1397]) this.tone({ freq: f, to: f * 1.03, dur: 0.17, type: 'sawtooth', gain: 0.04 * g, wet: 0.9 });
+        if (this.beat % 8 === 7) this.noise({ dur: 0.6, type: 'bandpass', freq: 500, q: 1, gain: 0.35 * g, sweep: 5, attack: 0.5, wet: 0.6 });
+      }
+    }
+    // close, but not hunting yet: that clicking in its throat
+    if (monster && monster.d < 11 && monster.state !== 3 && monster.state !== 4 && monster.state !== 6) {
+      this.croakT -= dt;
+      if (this.croakT <= 0) { this.croakT = 3.5 + Math.random() * 4; this.croak([monster.x, monster.y + 1.9, monster.z]); }
+    }
     this.loops.static.g.gain.setTargetAtTime(threat * threat * 0.07, t, 0.1);
     this.loops.droneGain.gain.setTargetAtTime(0.045 + threat * 0.07, t, 0.5);
     this.loops.hum.gain.setTargetAtTime(power ? 0.006 : 0, t, 0.5);
@@ -145,6 +182,99 @@ export class AudioSys {
         this.tone({ freq: 62, to: 38, dur: 0.16, gain: g, wet: 0 }); this.tone({ freq: 55, to: 34, dur: 0.18, gain: g * 0.7, when: 0.17, wet: 0 });
       }
     }
+  }
+
+  /** a point `d` metres from the listener in a random direction */
+  near(min, max) { const a = Math.random() * 6.283, d = R(min, max); return [this.lpos.x + Math.cos(a) * d, this.lpos.y, this.lpos.z + Math.sin(a) * d]; }
+  randomAmbient() {
+    const p = this.near(9, 24);
+    switch ((Math.random() * 7) | 0) {
+      case 0: this.groan(p); break;
+      case 1: for (let i = 0; i < (2 + Math.random() * 3 | 0); i++) { this.tone({ freq: R(140, 200), dur: 0.25, gain: 0.5, pos: p, when: i * R(0.35, 0.7), wet: 1.2 }); this.noise({ dur: 0.04, type: 'bandpass', freq: 1500, q: 3, gain: 0.4, pos: p, when: i * 0.5 }); } break; // pipes knocking
+      case 2: this.tone({ freq: R(210, 320), to: R(330, 520), dur: R(0.9, 1.8), type: 'sawtooth', gain: 0.035, pos: p, vibrato: 22, wet: 1.2 }); break;  // a hinge somewhere
+      case 3: for (let i = 0; i < 4; i++) this.tone({ freq: 1900, to: 700, dur: 0.07, gain: 0.12, pos: this.near(3, 8), when: i * R(0.6, 1.1), wet: 1.3 }); break; // dripping
+      case 4: this.moan(p); break;
+      case 5: this.noise({ dur: 2.6, type: 'bandpass', freq: 380, q: 0.7, gain: 0.25, pos: p, attack: 1.2, sweep: 1.8, wet: 1 }); break;                       // a draught moving through
+      default: this.noise({ dur: 0.5, freq: 260, gain: 0.7, pos: p, wet: 1.4 }); this.tone({ freq: 62, to: 40, dur: 0.4, gain: 0.5, pos: p, wet: 1 });         // a door, far away
+    }
+  }
+  groan(pos) {
+    this.tone({ freq: R(52, 64), to: R(40, 47), dur: 3, type: 'sawtooth', gain: 0.22, pos, vibrato: 3, attack: 0.8, wet: 1.3 });
+    this.tone({ freq: R(170, 200), to: R(140, 160), dur: 2.2, type: 'sawtooth', gain: 0.03, pos, vibrato: 45, attack: 0.5, wet: 1.3 });
+  }
+  /** something that used to be a voice */
+  moan(pos) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime, dur = R(2.2, 3.4), f0 = R(92, 130);
+    const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(f0, t); o.frequency.linearRampToValueAtTime(f0 * 1.12, t + dur * 0.4); o.frequency.linearRampToValueAtTime(f0 * 0.8, t + dur);
+    const l = ctx.createOscillator(), lg = ctx.createGain(); l.frequency.value = 5; lg.gain.value = 3; l.connect(lg); lg.connect(o.frequency);
+    const out = this.out(pos, 1.4);
+    const env = ctx.createGain(); env.gain.setValueAtTime(0.0001, t); env.gain.linearRampToValueAtTime(0.5, t + dur * 0.35); env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    for (const [ff, q, g] of [[520, 6, 1], [1150, 8, 0.45], [2500, 9, 0.15]]) { const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = ff; f.Q.value = q; const fg = ctx.createGain(); fg.gain.value = g; o.connect(f); f.connect(fg); fg.connect(env); }
+    env.connect(out); o.start(t); l.start(t); o.stop(t + dur + 0.1); l.stop(t + dur + 0.1);
+  }
+  /** dry clicks in a throat, speeding up and slowing down */
+  croak(pos) {
+    let when = 0;
+    const n = 12 + (Math.random() * 8 | 0);
+    for (let i = 0; i < n; i++) {
+      const k = Math.sin((i / n) * Math.PI);
+      this.noise({ dur: 0.028, type: 'bandpass', freq: R(900, 1500), q: 7, gain: 0.9, pos, when, wet: 0.9 });
+      this.tone({ freq: R(80, 110), dur: 0.03, gain: 0.5, pos, when, wet: 0.5 });
+      when += 0.13 - k * 0.085;
+    }
+  }
+  /** a child's music box winding down, somewhere close */
+  musicBox(pos) {
+    const scale = [659.3, 587.3, 523.3, 493.9, 440, 392, 349.2, 329.6]; // descending minor
+    const motif = [0, 2, 4, 2, 0, 2, 4, 7, 5, 4, 2, 4, 0];
+    let when = 0, gap = 0.34;
+    for (let i = 0; i < motif.length; i++) {
+      const f = scale[motif[i]] * (1 + R(-0.012, 0.012)) * (i > 8 ? 1 - (i - 8) * 0.012 : 1); // goes flat as the spring runs out
+      this.tone({ freq: f, dur: 1.5, gain: 0.16, pos, when, attack: 0.003, wet: 1.4 }); this.tone({ freq: f * 3.01, dur: 0.5, gain: 0.04, pos, when, attack: 0.003, wet: 1.4 });
+      when += gap; gap *= i > 7 ? 1.22 : 1.0;
+    }
+  }
+  /** the school bell, far off and wrong */
+  schoolBell(pos) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime, dur = 3.2;
+    const out = this.out(pos, 1.6);
+    const env = ctx.createGain(); env.gain.setValueAtTime(0.0001, t); env.gain.linearRampToValueAtTime(0.5, t + 0.05); env.gain.setValueAtTime(0.5, t + dur * 0.6); env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const am = ctx.createGain(); am.gain.value = 0.5; const hammer = ctx.createOscillator(); hammer.type = 'square'; hammer.frequency.setValueAtTime(15, t); hammer.frequency.linearRampToValueAtTime(7, t + dur);
+    const hg = ctx.createGain(); hg.gain.value = 0.5; hammer.connect(hg); hg.connect(am.gain);
+    for (const f of [690, 1105, 1760, 2390]) { const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.setValueAtTime(f, t); o.frequency.linearRampToValueAtTime(f * 0.86, t + dur); const g = ctx.createGain(); g.gain.value = 0.2; o.connect(g); g.connect(am); o.start(t); o.stop(t + dur + 0.1); }
+    am.connect(env); env.connect(out); hammer.start(t); hammer.stop(t + dur + 0.1);
+  }
+  /** breathing, directly behind your head */
+  breathBehind() {
+    const fx = -Math.sin(this.lyaw), fz = -Math.cos(this.lyaw);
+    const pos = [this.lpos.x - fx * 0.45, this.lpos.y - 0.05, this.lpos.z - fz * 0.45];
+    for (let i = 0; i < 3; i++) {
+      this.noise({ dur: 1.0, type: 'bandpass', freq: 620, q: 1.4, gain: 0.5, pos, when: i * 1.9, attack: 0.45, wet: 0.2 });        // in
+      this.noise({ dur: 1.2, type: 'bandpass', freq: 900, q: 1.1, gain: 0.7, pos, when: i * 1.9 + 0.85, attack: 0.3, wet: 0.2 });  // out, on your neck
+    }
+  }
+  /** what he does when he sees you */
+  roar(pos) {
+    if (!this.ctx) return;
+    this.ensureShaper();
+    const ctx = this.ctx, t = ctx.currentTime, dur = 1.5;
+    const env = ctx.createGain(); env.gain.setValueAtTime(0.0001, t); env.gain.linearRampToValueAtTime(0.7, t + 0.06); env.gain.exponentialRampToValueAtTime(0.0001, t + dur); env.connect(this.shaper);
+    for (const f of [74, 111, 149]) { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(f * 1.5, t); o.frequency.exponentialRampToValueAtTime(f * 0.7, t + dur); const l = ctx.createOscillator(), lg = ctx.createGain(); l.frequency.value = 27; lg.gain.value = f * 0.2; l.connect(lg); lg.connect(o.frequency); const g = ctx.createGain(); g.gain.value = 0.3; o.connect(g); g.connect(env); o.start(t); l.start(t); o.stop(t + dur + 0.1); l.stop(t + dur + 0.1); }
+    this.noise({ dur: 1.2, type: 'bandpass', freq: 700, q: 0.8, gain: 0.8, pos, sweep: 0.4, wet: 0.8 });
+  }
+  lockerBang(pos) { for (let i = 0; i < 4; i++) { const w = i * R(0.22, 0.4); this.noise({ dur: 0.16, type: 'bandpass', freq: R(500, 900), q: 2, gain: 1.6, pos, when: w, wet: 1 }); this.tone({ freq: 95, to: 50, dur: 0.18, gain: 1.1, pos, when: w }); } }
+  blackoutHit() { this.tone({ freq: 46, dur: 2.6, gain: 0.9, attack: 0.02, wet: 0.2 }); this.noise({ dur: 0.25, type: 'highpass', freq: 3500, gain: 0.3, wet: 0 }); this.tone({ freq: 2793, to: 2850, dur: 2.4, gain: 0.025, attack: 0.6, wet: 1 }); }
+  ensureShaper() {
+    if (this.shaper) return;
+    const ctx = this.ctx; // hard clipping makes it harsh instead of merely loud
+    this.shaper = ctx.createWaveShaper();
+    const n = 1024, curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(x * 6); }
+    this.shaper.curve = curve; this.shaper.oversample = '2x';
+    const g = ctx.createGain(); g.gain.value = 0.8; this.shaper.connect(g); g.connect(this.master);
+    const w = ctx.createGain(); w.gain.value = 0.3; g.connect(w); w.connect(this.wet);
   }
 
   // ---- one-shots ----
@@ -213,31 +343,33 @@ export class AudioSys {
   }
   pant() { this.noise({ dur: 0.28, type: 'bandpass', freq: 900, q: 1.2, gain: 0.11, attack: 0.09, wet: 0 }); this.noise({ dur: 0.22, type: 'bandpass', freq: 600, q: 1.2, gain: 0.07, attack: 0.08, when: 0.3, wet: 0 }); }
   beep() { this.tone({ freq: 980, dur: 0.08, type: 'square', gain: 0.05, wet: 0 }); this.tone({ freq: 980, dur: 0.08, type: 'square', gain: 0.05, when: 0.16, wet: 0 }); }
-  /** Jumpscare: a distorted, layered shriek. long = the hit that puts you down. */
+  /** Jumpscare: silence for a heartbeat, then a human scream torn apart by distortion. long = the hit that puts you down. */
   jumpscare(long = false) {
     if (!this.ctx) return;
-    const ctx = this.ctx, t = ctx.currentTime, dur = long ? 1.25 : 0.75;
-    if (!this.shaper) { // hard clipping makes it harsh instead of merely loud
-      this.shaper = ctx.createWaveShaper();
-      const n = 1024, curve = new Float32Array(n);
-      for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(x * 6); }
-      this.shaper.curve = curve; this.shaper.oversample = '2x';
-      const g = ctx.createGain(); g.gain.value = 0.55; this.shaper.connect(g); g.connect(this.master);
-      const w = ctx.createGain(); w.gain.value = 0.25; g.connect(w); w.connect(this.wet);
-    }
+    this.ensureShaper();
+    const ctx = this.ctx, t = ctx.currentTime + 0.02, dur = long ? 1.6 : 1.05;
     const env = ctx.createGain(); env.connect(this.shaper);
-    env.gain.setValueAtTime(0.0001, t); env.gain.linearRampToValueAtTime(1, t + 0.012); env.gain.setValueAtTime(1, t + dur * 0.55); env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    for (const f of [392, 421, 587, 803, 1190]) { // a dissonant cluster that jumps up, then sags
-      const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sawtooth'; g.gain.value = 0.22;
-      o.frequency.setValueAtTime(f * 0.6, t); o.frequency.exponentialRampToValueAtTime(f * 1.9, t + 0.07); o.frequency.exponentialRampToValueAtTime(f * 1.25, t + dur);
+    env.gain.setValueAtTime(0.0001, t); env.gain.linearRampToValueAtTime(1.2, t + 0.01); env.gain.setValueAtTime(1.2, t + dur * 0.6); env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    // 1) the scream itself: a voice (sawtooth through vowel formants) that cracks upward and breaks
+    const v = ctx.createOscillator(); v.type = 'sawtooth';
+    v.frequency.setValueAtTime(520, t); v.frequency.exponentialRampToValueAtTime(1180, t + 0.09); v.frequency.setValueAtTime(1180, t + dur * 0.45); v.frequency.exponentialRampToValueAtTime(640, t + dur);
+    const vl = ctx.createOscillator(), vlg = ctx.createGain(); vl.frequency.value = 31; vlg.gain.value = 140; vl.connect(vlg); vlg.connect(v.frequency);
+    for (const [ff, q, g] of [[1050, 4, 1.0], [1750, 5, 0.8], [3100, 6, 0.6]]) { const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = ff; f.Q.value = q; const fg = ctx.createGain(); fg.gain.value = g; v.connect(f); f.connect(fg); fg.connect(env); }
+    v.start(t); vl.start(t); v.stop(t + dur + 0.05); vl.stop(t + dur + 0.05);
+    // 2) a dissonant cluster under it that jumps up, then sags
+    for (const f of [392, 421, 587, 803, 1190]) {
+      const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sawtooth'; g.gain.value = 0.2;
+      o.frequency.setValueAtTime(f * 0.6, t); o.frequency.exponentialRampToValueAtTime(f * 1.9, t + 0.07); o.frequency.exponentialRampToValueAtTime(f * 1.2, t + dur);
       const l = ctx.createOscillator(), lg = ctx.createGain(); l.frequency.value = 19 + Math.random() * 14; lg.gain.value = f * 0.09; l.connect(lg); lg.connect(o.frequency);
       o.connect(g); g.connect(env); o.start(t); l.start(t); o.stop(t + dur + 0.05); l.stop(t + dur + 0.05);
     }
+    // 3) breath and tearing noise
     const n = ctx.createBufferSource(); n.buffer = this.white; n.loop = true;
     const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.setValueAtTime(900, t); nf.frequency.exponentialRampToValueAtTime(4200, t + 0.1); nf.Q.value = 0.8;
-    const ng = ctx.createGain(); ng.gain.value = 0.7; n.connect(nf); nf.connect(ng); ng.connect(env); n.start(t); n.stop(t + dur + 0.05);
-    this.tone({ freq: 60, to: 28, dur: 0.5, gain: 1.3, wet: 0 });       // the thump in your chest
-    this.noise({ dur: 0.12, freq: 300, gain: 1.4, wet: 0.2 });
+    const ng = ctx.createGain(); ng.gain.value = 0.9; n.connect(nf); nf.connect(ng); ng.connect(env); n.start(t); n.stop(t + dur + 0.05);
+    // 4) the blow to the chest, and the ringing afterwards
+    this.tone({ freq: 64, to: 26, dur: 0.7, gain: 1.6, wet: 0 }); this.noise({ dur: 0.14, freq: 300, gain: 1.6, wet: 0.2 });
+    this.tone({ freq: 3400, dur: 3.5, gain: 0.045, attack: 0.3, when: dur * 0.7, wet: 0 });
   }
   heal() { this.tone({ freq: 440, to: 660, dur: 0.5, type: 'triangle', gain: 0.12, wet: 0.4 }); }
   endJingle(win) {

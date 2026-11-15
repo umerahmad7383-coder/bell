@@ -44,7 +44,7 @@ export class Game {
     });
     this.spawnItems();
     this.monster = new Monster(this);
-    this.paraT = rand(20, 35);
+    this.paraT = rand(14, 22);
     this.pending = []; // delayed actions {t, fn}
   }
 
@@ -507,7 +507,7 @@ export class Game {
 
     // randomised paranormal events (purely atmospheric, except falling objects make real noise)
     this.paraT -= dt;
-    if (this.paraT <= 0) { this.paraT = rand(22, 50) - this.stage() * 2; this.paranormal(); }
+    if (this.paraT <= 0) { this.paraT = rand(11, 24) - this.stage(); this.paranormal(); } // something happens roughly every 15 seconds
     for (const p of this.players.values()) if (this.time - p.lastT > 0.4) { p.vx *= 0.8; p.vz *= 0.8; } // stale velocity decays
 
     const snap = { t: Math.round(this.time * 1000), p: [], m: this.monster.snap() };
@@ -517,42 +517,71 @@ export class Game {
     this.send('g:snap', snap);
   }
 
+  /**
+   * The school's own tricks. These are identical on every difficulty: difficulty changes how
+   * dangerous the Headmaster is, never how frightening the building is.
+   */
   paranormal() {
     const alive = [...this.players.values()].filter((p) => p.state === 'alive');
     if (!alive.length) return;
-    const p = pick(alive);
-    // Rarely, the school plays a trick on ONE player: a jumpscare with nothing actually there.
-    // Never when he is genuinely close (that would muddle the real warning signs), never twice in quick succession.
-    if (this.time > 60 && Math.random() < 0.14) {
-      const m = this.monster;
-      const marks = alive.filter((q) => q.hidden < 0 && this.time - (q.jumpT ?? -999) > 150 && dist(q.x, q.z, m.x, m.z) > 18);
-      if (marks.length) { const q = pick(marks); q.jumpT = this.time; this.emitTo(q, { e: 'para', type: 'jump' }); return; }
-    }
-    const type = pick(['flicker', 'slam', 'whisper', 'scream', 'fall', 'thunder', 'thunder', 'steps', 'knock', 'shadow', 'clang']);
+    const p = pick(alive), m = this.monster;
+    const far = (q) => dist(q.x, q.z, m.x, m.z) > 18;
+    const free = (x, z) => { const cx = Math.floor(x), cz = Math.floor(z); return inBounds(cx, cz) && MAP.grid[idx(cx, cz)] === 1 && !MAP.blocked[idx(cx, cz)]; };
     const around = (min, max) => {
       for (let i = 0; i < 12; i++) {
         const a = rand(0, Math.PI * 2), d = rand(min, max);
         const x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
-        const cx = Math.floor(x), cz = Math.floor(z);
-        if (inBounds(cx, cz) && MAP.grid[idx(cx, cz)] === 1 && !MAP.blocked[idx(cx, cz)]) return [r2(x), r2(floorY(x, z)), r2(z)];
+        if (free(x, z)) return [r2(x), r2(floorY(x, z)), r2(z)];
       }
       return [r2(p.x), r2(p.y), r2(p.z)];
     };
-    if (type === 'slam') {
-      // an open door near the players slams shut on its own
-      const d = this.doors.find((d) => d.open && d.kind === 'door' && dist(d.x, d.z, p.x, p.z) < 18 && dist(d.x, d.z, p.x, p.z) > 2.5
-        && ![...this.players.values()].some((q) => dist(q.x, q.z, d.x + 0.5, d.z + 0.5) < 1.2) && dist(this.monster.x, this.monster.z, d.x + 0.5, d.z + 0.5) > 1.5);
-      if (d) { d.open = false; this.emit({ e: 'door', id: d.id, open: 0, locked: 0, by: 'ghost' }); return; }
-      return this.emit({ e: 'para', type: 'knock', p: around(5, 12) });
+    const sightOpaque = (c) => { const di = MAP.doorAt[c]; return di >= 0 && !this.doors[di].open; };
+
+    // A jumpscare with nothing actually there, for ONE player. Never when he is genuinely close
+    // (that would muddle the real warning signs), never twice in quick succession.
+    if (this.time > 50 && Math.random() < 0.13) {
+      const marks = alive.filter((q) => q.hidden < 0 && this.time - (q.jumpT ?? -999) > 110 && far(q));
+      if (marks.length) { const q = pick(marks); q.jumpT = this.time; this.emitTo(q, { e: 'para', type: 'jump' }); return; }
     }
-    if (type === 'fall') {
-      const pos = around(5, 10);
-      this.emit({ e: 'para', type, p: pos });
-      this.noise(pos[0], pos[2], 11);
-      return;
+    const type = pick(['flicker', 'slam', 'creak', 'whisper', 'whisper', 'scream', 'fall', 'thunder', 'steps', 'knock', 'shadow', 'clang',
+      'apparition', 'apparition', 'apparition', 'blackout', 'blackout', 'lockerbang', 'name', 'bell', 'musicbox', 'breath', 'breath', 'croak']);
+    switch (type) {
+      case 'slam': {
+        // an open door near the players slams shut on its own
+        const d = this.doors.find((d) => d.open && d.kind === 'door' && dist(d.x, d.z, p.x, p.z) < 18 && dist(d.x, d.z, p.x, p.z) > 2.5
+          && ![...this.players.values()].some((q) => dist(q.x, q.z, d.x + 0.5, d.z + 0.5) < 1.2) && dist(m.x, m.z, d.x + 0.5, d.z + 0.5) > 1.5);
+        if (d) { d.open = false; this.emit({ e: 'door', id: d.id, open: 0, locked: 0, by: 'ghost' }); return; }
+        return this.emit({ e: 'para', type: 'knock', p: around(5, 12) });
+      }
+      case 'creak': {
+        // ...or a closed one swings open by itself, slowly
+        const d = this.doors.find((d) => !d.open && !d.locked && d.kind === 'door' && dist(d.x, d.z, p.x, p.z) < 12 && dist(d.x, d.z, p.x, p.z) > 2);
+        if (d) { d.open = true; this.emit({ e: 'door', id: d.id, open: 1, locked: 0, by: 'ghost' }); return; }
+        return this.emit({ e: 'para', type: 'whisper', p: around(2, 5) });
+      }
+      case 'fall': { const pos = around(5, 10); this.emit({ e: 'para', type, p: pos }); this.noise(pos[0], pos[2], 11); return; }
+      case 'shadow': return this.emitTo(p, { e: 'para', type, p: around(8, 14) });
+      case 'apparition': {
+        // he is standing there, perfectly still. Only this player can see him; he is not really there.
+        if (!far(p) || p.hidden >= 0) return this.emit({ e: 'para', type: 'whisper', p: around(2, 5) });
+        for (let i = 0; i < 30; i++) {
+          const a = rand(0, Math.PI * 2), d = rand(7, 15);
+          const x = Math.floor(p.x + Math.cos(a) * d) + 0.5, z = Math.floor(p.z + Math.sin(a) * d) + 0.5;
+          if (!free(x, z) || Math.abs(floorY(x, z) - p.y) > 0.5 || !lineOfSight(p.x, p.z, x, z, sightOpaque)) continue;
+          return this.emitTo(p, { e: 'para', type, p: [x, r2(floorY(x, z)), z] });
+        }
+        return this.emitTo(p, { e: 'para', type: 'breath' });
+      }
+      case 'blackout': case 'breath': case 'name': return this.emitTo(p, { e: 'para', type });
+      case 'lockerbang': {
+        const near = MAP.lockers.filter((L) => dist(L.x, L.z, p.x, p.z) < 14 && ![...this.players.values()].some((q) => q.hidden === L.id));
+        if (near.length) return this.emit({ e: 'para', type, id: pick(near).id });
+        return this.emit({ e: 'para', type: 'knock', p: around(5, 12) });
+      }
+      case 'whisper': case 'musicbox': return this.emit({ e: 'para', type, p: around(3, 9) });
+      case 'scream': case 'steps': case 'clang': case 'croak': case 'bell': return this.emit({ e: 'para', type, p: around(14, 26) });
+      default: return this.emit({ e: 'para', type, p: around(3, 8) });
     }
-    if (type === 'shadow') return this.emitTo(p, { e: 'para', type, p: around(8, 14) });
-    this.emit({ e: 'para', type, p: type === 'scream' || type === 'steps' || type === 'clang' ? around(14, 26) : around(3, 8) });
   }
 }
 

@@ -28,7 +28,7 @@ export class MonsterModel {
     const skull = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 14), new THREE.MeshLambertMaterial({ map: T.face }));
     skull.scale.set(0.17, 0.27, 0.19); skull.position.y = 0.2; skull.castShadow = true; head.add(skull);
     // two faint glints so you sometimes see it watching from the dark before you see anything else
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xcfd0c0, fog: false });
+    const eyeMat = (this.eyeMat = new THREE.MeshBasicMaterial({ color: 0xcfd0c0, fog: false }));
     this.eyes = [-1, 1].map((sx) => { const e = new THREE.Mesh(new THREE.SphereGeometry(0.011, 6, 6), eyeMat); e.position.set(sx > 0 ? 0.059 : -0.066, sx > 0 ? 0.265 : 0.283, sx > 0 ? 0.177 : 0.171); head.add(e); return e; });
 
     this.arms = [-1, 1].map((sx) => {
@@ -63,6 +63,9 @@ export class MonsterModel {
     this.attackK = lerp(this.attackK, attack ? 1 : 0, Math.min(1, dt * 12));
     const ck = this.crawlK, pk = this.pose, ak = this.attackK;
     const moving = Math.min(1, speed / 1.2);
+    // the eyes: two pale pin-pricks normally, red and wide once he is after you
+    this.eyeMat.color.setRGB(lerp(0.81, 1, pk), lerp(0.82, 0.08, pk), lerp(0.75, 0.05, pk));
+    for (const e of this.eyes) e.scale.setScalar(1 + pk * 1.1);
 
     this.hips.position.y = lerp(1.2 - Math.abs(s) * 0.035 * moving, 0.46 + Math.abs(s) * 0.03, ck);
     this.spine.rotation.x = lerp(0.16 + pk * 0.32 + ak * 0.2, 1.42, ck);

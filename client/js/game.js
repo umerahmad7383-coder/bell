@@ -52,11 +52,11 @@ export class Game {
 
     const scene = (this.scene = new THREE.Scene());
     scene.background = new THREE.Color(0x020305);
-    scene.fog = new THREE.FogExp2(0x020305, 0.052);
+    scene.fog = new THREE.FogExp2(0x020305, 0.062);
     this.cam = new THREE.PerspectiveCamera(settings.fov, innerWidth / innerHeight, 0.06, 90);
     this.cam.rotation.order = 'YXZ';
     scene.add(this.cam);
-    this.amb = new THREE.AmbientLight(0x7486a8, 0.5); scene.add(this.amb); this.ambBase = 0.5;
+    this.amb = new THREE.AmbientLight(0x7486a8, 0.36); scene.add(this.amb); this.ambBase = 0.36;
 
     this.T = buildTextures();
     this.world = buildWorld(scene, this.T, Q);
@@ -72,6 +72,8 @@ export class Game {
     for (let i = 0; i < Math.min(Q.spots, init.players.length - 1); i++) { const s = new THREE.SpotLight(0xfff1d6, 0, 26, 0.5, 0.6, 1.05); scene.add(s, s.target); this.spots.push(s); }
 
     this.monster = new MonsterModel(this.T); scene.add(this.monster.group);
+    // a second copy of him for things that are not really there
+    this.ghost = new MonsterModel(this.T); this.ghost.group.visible = false; scene.add(this.ghost.group); this.ghostS = null; this.blackout = 0;
     this.mbuf = [{ t: 0, x: init.monster[0], z: init.monster[1], ry: init.monster[2], st: init.monster[3], crawl: init.monster[4] }];
     this.m = { x: init.monster[0], y: 0, z: init.monster[1], ry: 0, state: 0, speed: 0, crawl: 0, stepD: 0 };
 
@@ -199,11 +201,58 @@ export class Game {
    */
   jumpscare(long, real) {
     if (!this.set.jumpscares) return;
-    const dur = long ? 1.0 : 0.6;
-    this.vm.startScare(dur);
+    const dur = long ? 1.15 : 0.75;
+    this.vm.startScare(dur, Math.random() < 0.2); // one time in five it is the other face
     this.audio.jumpscare(long);
     this.shake = Math.max(this.shake, 1.6); this.scareFlash = 0.16; this.scareStatic = dur;
     if (real) { const f = this.lastFeet; this.snapYaw = { to: Math.atan2(-(this.m.x - f.x), -(this.m.z - f.z)), t: 0.14 }; }
+  }
+  /** It knows who you are: the browser's own voice, slowed and dropped as low as it goes, plus whispering. */
+  whisperName() {
+    const c = this.cam.position, back = [c.x + Math.sin(this.yaw) * 0.6, c.y, c.z + Math.cos(this.yaw) * 0.6];
+    this.audio.whisper(back);
+    try {
+      const u = new SpeechSynthesisUtterance(this.me.name);
+      u.rate = 0.5; u.pitch = 0; u.volume = Math.min(1, 0.55 * this.set.vol);
+      window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
+    } catch { /* no speech synthesis in this browser: the whispering alone will do */ }
+  }
+  /** An apparition of the Headmaster that only you can see. mode: 'stand' (waits to be noticed) or 'flash'. */
+  spawnGhost(x, y, z, mode) {
+    this.ghostS = { x, y, z, mode, t: 0, seen: 0 };
+    const g = this.ghost.group; g.position.set(x, y, z); g.visible = true;
+  }
+  endGhost(sting) {
+    this.ghostS = null; this.ghost.group.visible = false;
+    if (sting) { this.world.flicker(1.0); this.flickerOwn = 0.6; this.audio.stinger('stalk'); this.audio.noise({ dur: 0.3, type: 'highpass', freq: 3000, gain: 0.3, wet: 0.5 }); }
+  }
+  updateGhost(dt) {
+    const G = this.ghostS; if (!G) return;
+    const me = this.me;
+    if (this.ended || me.state === 'dead' || me.state === 'escaped') return this.endGhost(false);
+    G.t += dt;
+    const c = this.cam.position, g = this.ghost.group;
+    const dx = G.x - c.x, dz = G.z - c.z, d = Math.hypot(dx, dz) || 0.01;
+    g.rotation.y = Math.atan2(-dx, -dz); // always facing you
+    if (G.mode === 'flash') { // there for a blink when the light comes back
+      this.ghost.update(dt, this.time, 4, 0, false);
+      if (G.t > 0.4) this.endGhost(true);
+    } else if (G.mode === 'stand') {
+      this.ghost.update(dt, this.time, 6, 0, false); // dead still, head tilted
+      const dot = (dx * -Math.sin(this.yaw) + dz * -Math.cos(this.yaw)) / d;
+      if (dot > 0.92 && d < 22 && lineOfSight(c.x, c.z, G.x, G.z, null)) G.seen += dt;
+      if (G.t > 18 && G.seen === 0) return this.endGhost(false);               // you never looked: he just leaves
+      if (G.seen > 0.75 || d < 4.5) {
+        if (this.set.jumpscares && d > 5.5 && Math.random() < 0.45) { G.mode = 'rush'; this.audio.roar([G.x, G.y + 1.8, G.z]); } // ...or he comes
+        else this.endGhost(true);
+      }
+    } else { // rush: straight at you, far too fast
+      const sp = 17 * dt;
+      G.x -= (dx / d) * sp; G.z -= (dz / d) * sp; G.y = floorY(G.x, G.z);
+      g.position.set(G.x, G.y, G.z);
+      this.ghost.update(dt, this.time, 3, 7, false);
+      if (d < 1.8) { this.endGhost(false); this.jumpscare(false, false); }
+    }
   }
   /** Mark what you are looking at for the whole team. Downed: call for help instead. */
   ping() {
@@ -352,7 +401,7 @@ export class Game {
 
   onMonsterState(s) {
     const d = Math.hypot(this.m.x - this.cam.position.x, this.m.z - this.cam.position.z);
-    if (s === 3 && d < 24 && this.time - this.stingT > 9) { this.audio.stinger('chase'); this.stingT = this.time; }
+    if (s === 3 && d < 24 && this.time - this.stingT > 9) { this.audio.stinger('chase'); this.audio.roar([this.m.x, this.m.y + 1.8, this.m.z]); this.stingT = this.time; }
     if (s === 6 && d < 30) this.audio.stinger('stalk');
     if (s === 2 && this.m.state === 3 && d < 24) this.audio.stinger('lost');
   }
@@ -360,6 +409,14 @@ export class Game {
   paranormal(e) {
     const A = this.audio, p = e.p;
     switch (e.type) {
+      case 'apparition': this.spawnGhost(p[0], p[1], p[2], 'stand'); break;
+      case 'blackout': this.blackout = 2.8; A.blackoutHit(); A.breathBehind(); this.world.flicker(2.8); break; // your light dies. Something breathes.
+      case 'breath': A.breathBehind(); break;
+      case 'name': this.whisperName(); break;
+      case 'lockerbang': { const L = MAP.lockers[e.id]; A.lockerBang([L.x + 0.5, L.y + 1, L.z + 0.5]); break; }
+      case 'bell': A.schoolBell([p[0], p[1] + 2.5, p[2]]); break;
+      case 'musicbox': A.musicBox([p[0], p[1] + 0.6, p[2]]); break;
+      case 'croak': A.croak([p[0], p[1] + 1.8, p[2]]); break;
       case 'jump': this.world.flicker(1.5); this.flickerOwn = 0.9; this.jumpscare(false, false); break; // not really there. Probably.
       case 'flicker': this.world.flicker(2.2); this.flickerOwn = 1.2; A.noise({ dur: 0.5, type: 'highpass', freq: 4000, gain: 0.08, wet: 0 }); break;
       case 'whisper': A.whisper([p[0], p[1] + 1.5, p[2]]); break;
@@ -421,12 +478,13 @@ export class Game {
     this.updateLocal(dt);
     this.updateRemotes(dt, now);
     this.updateMonster(dt, now);
+    this.updateGhost(dt);
     this.updateEffects(dt);
     this.targetT -= dt; if (this.targetT <= 0) { this.targetT = 0.07; this.updateTarget(); }
     for (let i = this.fx.length - 1; i >= 0; i--) if (this.fx[i](dt)) this.fx.splice(i, 1);
     this.world.update(dt, this.time, this.cam.position);
     this.audio.setListener(this.cam.position, this.cam.rotation.y);
-    this.audio.update(dt, this.ended ? 0 : this.threat, this.ended ? null : this.m, this.world.power);
+    this.audio.update(dt, this.ended ? 0 : this.threat, this.ended ? null : this.m, this.world.power, this.ended ? 20000 : this.me.state === 'downed' ? 520 : this.me.state === 'alive' && this.me.hp < this.maxHp ? 4200 : 20000);
     this.hudT -= dt; if (this.hudT <= 0) { this.hudT = 0.1; this.updateHud(); }
     // shadows are re-rendered every second frame (the one-frame lag is invisible, the saving is not)
     if (this.Q.shadows) this.r.shadowMap.needsUpdate = (this.frame++ & 1) === 0;
@@ -629,6 +687,8 @@ export class Game {
     const sameFloor = Math.abs(m.y + 1.6 - c.y) < 2.4;
     const los = sameFloor && d < 30 && lineOfSight(c.x, c.z, m.x, m.z, (cell) => { const di = MAP.doorAt[cell]; return di >= 0 && !this.world.doors[di].open; });
     const base = clamp(1 - d / 16, 0, 1);
+    m.d = d;
+    if (los && d < 11 && !this.ended) this.world.flicker(0.25); // the lights fail around him
     let th = los ? base : base * 0.4;
     if ((m.state === 3 || m.state === 4) && d < 26) th = Math.max(th, 0.5 + 0.5 * base);
     if (me.state === 'dead' || me.state === 'escaped' || this.ended) th = 0;
@@ -648,6 +708,16 @@ export class Game {
       if (this.threat > 0.45 && Math.random() < this.threat * 0.25) fi *= 0.25; // it gutters when he is close
       if (this.flickerOwn > 0) { this.flickerOwn -= dt; if (Math.sin(this.time * 45) > 0) fi *= 0.1; }
     }
+    // blackout: the torch simply dies for a few seconds; sometimes he is there when it comes back
+    if (this.blackout > 0) {
+      this.blackout -= dt;
+      fi = this.blackout < 0.35 && Math.sin(this.time * 70) > 0 ? fi : 0;
+      if (this.blackout <= 0 && canLight && Math.random() < 0.45) {
+        const f = this.lastFeet, gx = f.x - Math.sin(this.yaw) * 2.3, gz = f.z - Math.cos(this.yaw) * 2.3;
+        if (MAP.grid[Math.floor(gz) * W + Math.floor(gx)] === 1 && lineOfSight(f.x, f.z, gx, gz, null)) this.spawnGhost(gx, floorY(gx, gz), gz, 'flash');
+      }
+    }
+    if (this.vm.scaring) fi = 0; // during a jumpscare there is nothing in the world but the face
     this.flash.intensity = lerp(this.flash.intensity, fi * 30, Math.min(1, dt * 30));
 
     // lightning: windows flare, the whole building is lit for an instant
@@ -659,6 +729,8 @@ export class Game {
       amb += on * (this.lightningNear ? 1.6 : 0.5);
       $('fx-flash').style.opacity = on && this.lightningNear ? 0.07 : 0;
     } else this.world.windowMat.color.setScalar(0.5);
+    if (this.blackout > 0) amb *= 0.08;
+    if (this.vm.scaring) amb = 0;
     this.amb.intensity = amb;
 
     // screen distortion

@@ -146,7 +146,15 @@ Same-network check without deploying: run `npm start` on one PC, find its local 
 
 **Your character.** Menu → **Character** (or **Edit Character** in the lobby) sets skin, clothes, shoes, hair, headwear, extras and build, with a live preview. Other players see that character. In first person you see your own body when you look down, your left hand holding the torch, and your right hand holding whichever inventory slot is selected; other players see what you are holding too.
 
-**Jumpscares.** When the Headmaster hits you, your view is wrenched round to him and his face fills the screen with a scream (longer on the hit that puts you down). Every few minutes the school may also play a fake one on a single player when he is nowhere near. Settings → Jumpscares turns both off; the flash is a single brief pulse, not a strobe.
+**Horror.** These are the same on every difficulty; difficulty only changes how dangerous the Headmaster is.
+
+- *Jumpscares.* When he hits you, your light dies, your view is wrenched round to him and a face fills the screen with a scream (longer on the hit that puts you down). One time in five it is the second face, `client/assets/scareface.png`; replace or delete that file to change or remove it. Roughly every few minutes the school also plays a fake one on a single player when he is nowhere near.
+- *Apparitions.* He appears standing still at a distance, visible only to you. Look at him too long or walk closer and he either vanishes with the lights, or runs at you.
+- *Blackouts.* Your torch dies for a few seconds while something breathes behind you. Sometimes he is there for a blink when it comes back.
+- *Sound.* A constant bed of rumble and dissonant voices; something distant every few seconds (pipes, hinges, moans, doors); a music box; a warped school bell; whispering; your own name spoken (uses the browser's speech voice, where available); lockers banging; clicking in his throat when he is near; a roar and pounding chase music when he sees you; everything goes muffled when you are hurt.
+- *Picture.* Darker, thicker fog, heavier vignette, film grain; ceiling lights fail around him; his eyes turn red when he hunts.
+
+Settings → Jumpscares switches off the face-on-screen scares (including the rushing apparition). The flash is a single brief pulse, not a strobe.
 
 There is no voice chat. Use Discord or similar alongside the built-in text chat.
 

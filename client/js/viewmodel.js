@@ -51,6 +51,11 @@ export class ViewModel {
     const sc = (this.scare = new THREE.Group()); sc.visible = false; this.scene.add(sc);
     this.scareMat = new THREE.MeshBasicMaterial({ map: T.scare });
     this.skull = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 28), this.scareMat); this.skull.scale.set(0.17, 0.27, 0.19); sc.add(this.skull); // the sphere's textured front already faces the camera (+Z)
+    // second face (assets/scareface.png), used for one scare in five
+    this.photoMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false });
+    this.photo = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.6), this.photoMat); this.photo.position.z = 0.06; this.photo.visible = false; sc.add(this.photo);
+    this.photoReady = false;
+    new THREE.TextureLoader().load('assets/scareface.png', (t) => { t.colorSpace = THREE.SRGBColorSpace; this.photoMat.map = t; this.photoMat.needsUpdate = true; this.photoReady = true; }, undefined, () => {});
     const cloth = new THREE.MeshBasicMaterial({ color: 0x0b0b0d }), bone = new THREE.MeshBasicMaterial({ color: 0x8f8a7a });
     const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.7, 0.24), cloth); torso.position.set(0, -0.62, 0.06); sc.add(torso);
     const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 0.2, 8), bone); neck.position.set(0, -0.3, 0.02); sc.add(neck);
@@ -77,7 +82,7 @@ export class ViewModel {
     this.holder.add(group);
   }
   /** The face lunges into the camera for `dur` seconds. */
-  startScare(dur) { this.scareT = dur; this.scareDur = dur; }
+  startScare(dur, photo = false) { this.scareT = dur; this.scareDur = dur; const usePhoto = photo && this.photoReady; this.photo.visible = usePhoto; this.skull.visible = !usePhoto; }
   get scaring() { return this.scareT > 0; }
   updateScare(dt) {
     const sc = this.scare;
@@ -93,7 +98,9 @@ export class ViewModel {
     const stretch = 1 + Math.abs(Math.sin(t * 34)) * 0.22;        // the jaw keeps opening
     this.skull.scale.set(0.17, 0.27 * stretch, 0.19);
     this.skull.position.y = -0.27 * (stretch - 1) * 0.5;
-    this.scareMat.color.setScalar(0.75 + Math.random() * 0.6);    // flickers like a failing bulb
+    const fl = 0.75 + Math.random() * 0.6;                          // flickers like a failing bulb
+    this.scareMat.color.setScalar(fl); this.photoMat.color.setRGB(fl, fl * 0.82, fl * 0.8);
+    this.photo.scale.set(1 + Math.abs(Math.sin(t * 27)) * 0.08, 1 + (stretch - 1) * 0.6, 1); this.photo.rotation.z = Math.sin(t * 61) * 0.06;
     for (const c of this.claws) {
       c.g.position.set(c.sx * lerp(0.8, 0.36, lunge) + j() * 0.02, -0.16 + j() * 0.02, lerp(0.1, 0.3, lunge));
       c.g.rotation.set(0.25 + j() * 0.1, -c.sx * 0.55, c.sx * 0.3);

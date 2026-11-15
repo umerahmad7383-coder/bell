@@ -19,7 +19,9 @@ const MIN_PLAYERS = Math.max(1, Number(process.env.MIN_PLAYERS) || 1); // 1 lets
 const app = express();
 const clientDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'client');
 app.get('/health', (_req, res) => res.json({ ok: true, lobbies: lobbies.size, uptime: Math.round(process.uptime()) }));
-app.use(express.static(clientDir, { maxAge: '5m' }));
+// "no-cache" = the browser may keep files but must ask whether they changed before using them,
+// so a redeploy reaches every player on their next page load (no stale game code).
+app.use(express.static(clientDir, { etag: true, lastModified: true, setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
 
 const server = http.createServer(app);
 const io = new Server(server, {
