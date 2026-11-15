@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>THE LAST BELL</title>
+<meta name="description" content="THE LAST BELL — an online co-op horror game. Escape the school before the Headmaster finds you.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060506'/%3E%3Cpath d='M16 5c-5 0-7 4-7 9v5l-2 3h18l-2-3v-5c0-5-2-9-7-9z' fill='%23a3120f'/%3E%3Ccircle cx='16' cy='25.5' r='2.2' fill='%23d9d4c7'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+<script src="config.js"></script>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="fx-vignette"></div>
+<div id="fx-static"></div>
+<div id="fx-flash"></div>
+<div id="fx-locker"></div>
+
+<!-- ======================= IN-GAME HUD ======================= -->
+<div id="hud" hidden>
+  <div id="crosshair"></div>
+  <div id="prompt"></div>
+  <div id="roomname"></div>
+  <div id="status"></div>
+  <div id="revivebar"><i></i></div>
+  <div id="toasts"></div>
+  <div id="teamlist"></div>
+  <div id="bars">
+    <div class="bar" id="bar-stamina"><span>STAMINA</span><div><i></i></div></div>
+    <div class="bar" id="bar-battery"><span>TORCH</span><div><i></i></div></div>
+    <div id="health"></div>
+  </div>
+  <div id="inv"></div>
+  <div id="chat"><div id="chatlog"></div><input id="chatinput" maxlength="160" placeholder="Say something… (Enter to send, Esc to cancel)" hidden></div>
+  <div id="notebook" hidden>
+    <h2>Notebook</h2>
+    <h3>Get out</h3>
+    <ol id="objectives"></ol>
+    <h3>Notes found</h3>
+    <div id="notes"><p class="dim">Nothing yet. Notes are shared with everyone when picked up.</p></div>
+    <p class="dim small">Hold TAB to read · He hears running · Crouch (C) to stay quiet · Lockers and tables hide you</p>
+  </div>
+  <div id="hint">TAB notebook · ENTER chat · ESC menu</div>
+</div>
+
+<!-- ======================= SCREENS ======================= -->
+<div id="screens">
+  <section id="s-menu" class="screen">
+    <div class="title-wrap">
+      <div class="kicker">an online co-op horror game</div>
+      <h1 class="title">THE LAST BELL</h1>
+      <div class="tagline">Class was never dismissed.</div>
+    </div>
+    <div class="panel menu">
+      <label class="field">Your name<input id="name" maxlength="16" placeholder="Student" autocomplete="off"></label>
+      <button id="btn-create" class="primary">Create Private Lobby</button>
+      <button id="btn-join">Join Lobby</button>
+      <button id="btn-solo">Play (solo practice)</button>
+      <button id="btn-settings">Settings</button>
+      <button id="btn-controls">Controls</button>
+      <div id="conn" class="conn">Connecting to server…</div>
+    </div>
+    <div class="foot">2–8 players · headphones strongly recommended</div>
+  </section>
+
+  <section id="s-join" class="screen overlay" hidden>
+    <div class="panel">
+      <h2>Join Lobby</h2>
+      <label class="field">Room code<input id="code" maxlength="6" placeholder="ABC123" autocomplete="off" spellcheck="false"></label>
+      <div id="join-error" class="error"></div>
+      <div class="row"><button id="btn-join-go" class="primary">Join</button><button data-close>Back</button></div>
+    </div>
+  </section>
+
+  <section id="s-lobby" class="screen" hidden>
+    <div class="panel wide">
+      <div class="lobby-head">
+        <div><div class="dim small">ROOM CODE</div><div id="lobby-code" class="code">······</div></div>
+        <div class="col"><button id="btn-copy-link" class="primary">Copy Invite Link</button><button id="btn-copy-code">Copy Code</button></div>
+      </div>
+      <div class="lobby-body">
+        <div>
+          <h3>Students <span id="lobby-count" class="dim"></span></h3>
+          <ul id="lobby-players"></ul>
+          <h3>Game mode</h3>
+          <div class="modes">
+            <label class="mode on"><input type="radio" name="mode" value="coop" checked> <b>Escape (co-op)</b><span>Everyone against the Headmaster.</span></label>
+            <label class="mode off"><input type="radio" name="mode" value="hunt" disabled> <b>Hunt Mode</b><span>One player is the Headmaster. Not built yet.</span></label>
+          </div>
+        </div>
+        <div class="lobby-chat">
+          <h3>Lobby chat</h3>
+          <div id="lobby-chatlog"></div>
+          <input id="lobby-chatinput" maxlength="160" placeholder="Type and press Enter">
+        </div>
+      </div>
+      <div id="lobby-note" class="dim small"></div>
+      <div id="lobby-error" class="error"></div>
+      <div class="row">
+        <button id="btn-ready">Ready</button>
+        <button id="btn-start" class="primary" hidden>Start Match</button>
+        <button id="btn-leave">Leave</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="s-settings" class="screen overlay" hidden>
+    <div class="panel">
+      <h2>Settings</h2>
+      <label class="field">Mouse sensitivity <input id="set-sens" type="range" min="0.3" max="3" step="0.05"></label>
+      <label class="field">Master volume <input id="set-vol" type="range" min="0" max="1" step="0.02"></label>
+      <label class="field">Field of view <input id="set-fov" type="range" min="60" max="100" step="1"></label>
+      <label class="field">Brightness <input id="set-bright" type="range" min="0.6" max="1.8" step="0.05"></label>
+      <label class="field">Graphics
+        <select id="set-quality"><option value="low">Low (no shadows, fewer lights)</option><option value="medium">Medium</option><option value="high">High</option></select>
+      </label>
+      <p class="dim small">Graphics quality applies from the next match. Everything else applies immediately.</p>
+      <div class="row"><button id="btn-fullscreen">Toggle Fullscreen</button><button data-close class="primary">Done</button></div>
+    </div>
+  </section>
+
+  <section id="s-controls" class="screen overlay" hidden>
+    <div class="panel">
+      <h2>Controls</h2>
+      <table class="keys">
+        <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>Move</td></tr>
+        <tr><td>Mouse</td><td>Look</td></tr>
+        <tr><td><kbd>Shift</kbd></td><td>Sprint (uses stamina — and he hears it)</td></tr>
+        <tr><td><kbd>Ctrl</kbd> or <kbd>C</kbd></td><td>Crouch (quiet, harder to see, fits under tables)</td></tr>
+        <tr><td><kbd>E</kbd></td><td>Interact: doors, items, lockers, revive</td></tr>
+        <tr><td><kbd>F</kbd></td><td>Flashlight</td></tr>
+        <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>Select inventory slot</td></tr>
+        <tr><td>Left click</td><td>Use held item</td></tr>
+        <tr><td><kbd>G</kbd></td><td>Drop held item (this is how you share)</td></tr>
+        <tr><td><kbd>Tab</kbd></td><td>Notebook: objectives and notes</td></tr>
+        <tr><td><kbd>Enter</kbd></td><td>Text chat</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Release mouse / menu</td></tr>
+      </table>
+      <p class="dim small"><b>Careful:</b> browsers reserve <kbd>Ctrl</kbd>+<kbd>W</kbd> for "close tab". Crouch with <kbd>C</kbd>, or play in fullscreen (Settings), where the game can lock those keys in Chrome and Edge.</p>
+      <div class="row"><button data-close class="primary">Done</button></div>
+    </div>
+  </section>
+
+  <section id="s-loading" class="screen" hidden>
+    <div class="loading">
+      <h2 class="title small-title">THE LAST BELL</h2>
+      <div id="loading-text">Unlocking the front doors…</div>
+      <div class="loadbar"><i id="loading-bar"></i></div>
+      <p class="dim" id="loading-tip"></p>
+    </div>
+  </section>
+
+  <section id="s-pause" class="screen overlay" hidden>
+    <div class="panel">
+      <h2>Paused?</h2>
+      <p class="dim">The school does not pause. Click to go back in.</p>
+      <button id="btn-resume" class="primary">Resume</button>
+      <button id="btn-pause-settings">Settings</button>
+      <button id="btn-pause-controls">Controls</button>
+      <button id="btn-quit">Leave Match</button>
+    </div>
+  </section>
+
+  <section id="s-end" class="screen overlay" hidden>
+    <div class="panel wide">
+      <h1 id="end-title" class="title small-title">ESCAPED</h1>
+      <div id="end-sub" class="tagline"></div>
+      <table id="end-table" class="summary"></table>
+      <div id="end-note" class="dim small"></div>
+      <div class="row"><button id="btn-rematch" class="primary" hidden>Back to Lobby (Rematch)</button><button id="btn-end-leave">Leave</button></div>
+    </div>
+  </section>
+</div>
+<div id="fatal" hidden></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

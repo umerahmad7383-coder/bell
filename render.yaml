@@ -1,0 +1,15 @@
+# Render Blueprint: one web service that serves the game page AND the WebSocket backend.
+# In Render: New + -> Blueprint -> pick the repo that contains this file.
+services:
+  - type: web
+    name: the-last-bell
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: CLIENT_ORIGIN
+        value: "*"
