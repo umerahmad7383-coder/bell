@@ -3,12 +3,12 @@
 // (which is sanity-checked here).
 import { MAP, W, WALL, idx, floorY, inBounds, lineOfSight, ROOMS } from '../client/shared/map.js';
 import { Monster } from './monster.js';
+import { DIFFICULTY, ITEM_TYPES, cleanLook } from '../client/shared/defs.js';
 
 export const TICK_HZ = 15;
 const INV_SLOTS = 4;
 const REACH = 2.8;
 const REVIVE_TIME = 4;
-const BLEED_TIME = 80;
 
 const rand = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[(Math.random() * arr.length) | 0];
@@ -21,9 +21,12 @@ export const ITEM_NAMES = {
 };
 
 export class Game {
-  /** players: [{pid, name}], send(ev, data), sendTo(pid, ev, data), onEnd(summary) */
-  constructor({ players, send, sendTo, onEnd, mode = 'coop' }) {
+  /** players: [{pid, name, look}], send(ev, data), sendTo(pid, ev, data), onEnd(summary) */
+  constructor({ players, send, sendTo, onEnd, mode = 'coop', difficulty = 'intermediate' }) {
     this.send = send; this.sendTo = sendTo; this.onEnd = onEnd; this.mode = mode;
+    this.difficulty = DIFFICULTY[difficulty] ? difficulty : 'intermediate';
+    this.D = DIFFICULTY[this.difficulty];
+    this.maxHp = this.D.hp;
     this.time = 0; this.over = false;
     this.doors = MAP.doors.map((d) => ({ ...d, open: false }));
     this.obj = { fusesFound: 0, fuses: 0, power: false, officeOpen: false, gateKey: false, security: false, gateOpen: false };
@@ -33,9 +36,9 @@ export class Game {
     players.forEach((pl, i) => {
       const s = MAP.playerSpawns[i % MAP.playerSpawns.length];
       this.players.set(pl.pid, {
-        id: pl.pid, name: pl.name, x: s.x, y: 0, z: s.z, ry: Math.PI / 2 * -1, rx: 0, flags: 0,
-        hp: 2, state: 'alive', inv: new Array(INV_SLOTS).fill(null), hidden: -1, bleed: 0,
-        lastT: 0, stepT: 0, reviving: null, lx: s.x, lz: s.z,
+        id: pl.pid, name: pl.name, look: cleanLook(pl.look, i), x: s.x, y: 0, z: s.z, ry: Math.PI / 2 * -1, rx: 0, flags: 0,
+        hp: this.maxHp, state: 'alive', inv: new Array(INV_SLOTS).fill(null), hidden: -1, bleed: 0,
+        lastT: 0, stepT: 0, reviving: null, vx: 0, vz: 0, sel: 0,
       });
     });
     this.spawnItems();
@@ -79,9 +82,10 @@ export class Game {
     texts.forEach((text, i) => place('note', noteRooms[i] || pick(general), { text }));
 
     // supplies (deliberately scarce)
-    for (let i = 0; i < 5; i++) place('battery', pick(general));
-    for (let i = 0; i < 5; i++) place('bottle', pick(general));
-    place('medkit', pick(general));
+    const k = this.D.supplies;
+    for (let i = 0; i < Math.round(5 * k); i++) place('battery', pick(general));
+    for (let i = 0; i < Math.round(5 * k); i++) place('bottle', pick(general));
+    for (let i = 0; i < Math.max(1, Math.round(1.4 * k)); i++) place('medkit', pick(general));
     place('lockpick', pick(general.filter((r) => r !== keyRoom)));
     place('bell', pick(general));
     // the hidden archive behind the library bookshelf always rewards whoever finds it
@@ -96,8 +100,8 @@ export class Game {
 
   initPayload(pid) {
     return {
-      you: pid, mode: this.mode,
-      players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, state: p.state, hp: p.hp })),
+      you: pid, mode: this.mode, difficulty: this.difficulty, maxHp: this.maxHp,
+      players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, look: p.look, x: p.x, y: p.y, z: p.z, state: p.state, hp: p.hp })),
       items: [...this.items.values()].map(pubItem),
       doors: this.doors.map((d) => [d.open ? 1 : 0, d.locked ? 1 : 0]),
       obj: this.obj, notes: this.notes,
@@ -116,11 +120,13 @@ export class Game {
     const o = this.obj;
     return Math.min(5, (o.fusesFound >= 3 ? 1 : 0) + (o.power ? 1 : 0) + (o.officeOpen ? 1 : 0) + (o.gateKey ? 1 : 0) + (o.security ? 1 : 0) + (o.gateOpen ? 1 : 0));
   }
+  /** How worked-up the Headmaster is: objectives completed, scaled by difficulty. */
+  aggression() { return this.stage() * this.D.aggr; }
   objChanged() { this.emit({ e: 'obj', obj: this.obj, stage: this.stage() }); }
 
-  noise(x, z, r, src = null) {
+  noise(x, z, r, src = null, extra = null) {
     if (this.over) return;
-    this.monster.onNoise({ x, z, r, src });
+    this.monster.onNoise({ x, z, r, src, ...extra });
   }
 
   // ---------- player input ----------
@@ -131,6 +137,7 @@ export class Game {
     const [x, y, z, ry, rx, flags] = s.map(Number);
     if (![x, y, z, ry, rx, flags].every(Number.isFinite)) return;
     p.ry = ry; p.rx = rx; p.flags = flags | 0;
+    if (s.length > 6) p.sel = Math.max(0, Math.min(INV_SLOTS - 1, s[6] | 0));
     if (p.hidden >= 0) return;
     const now = this.time;
     const dt = Math.max(0.02, now - p.lastT);
@@ -144,6 +151,9 @@ export class Game {
       p.lastT = now;
       return;
     }
+    // velocity estimate: the Headmaster uses it to guess where a fleeing player is heading
+    const k = Math.min(1, dt * 6);
+    p.vx += ((x - p.x) / dt - p.vx) * k; p.vz += ((z - p.z) / dt - p.vz) * k;
     p.x = x; p.y = y; p.z = z; p.lastT = now;
   }
 
@@ -304,8 +314,8 @@ export class Game {
         this.consume(p, slot); this.emitTo(p, { e: 'battery' }); break;
       case 'medkit': {
         const downed = [...this.players.values()].find((q) => q.state === 'downed' && this.playerNear(p, q.x, q.z, 2.6));
-        if (downed) { this.consume(p, slot); this.revive(downed, 2, p); }
-        else if (p.hp < 2) { this.consume(p, slot); p.hp = 2; this.emit({ e: 'pstate', id: p.id, state: p.state, hp: p.hp }); this.msg(p, 'You patch yourself up.', 'good'); }
+        if (downed) { this.consume(p, slot); this.revive(downed, this.maxHp, p); }
+        else if (p.hp < this.maxHp) { this.consume(p, slot); p.hp = this.maxHp; this.emit({ e: 'pstate', id: p.id, state: p.state, hp: p.hp }); this.msg(p, 'You patch yourself up.', 'good'); }
         else this.msg(p, "You're not hurt. Save it — or use it next to a downed teammate.", 'info');
         break;
       }
@@ -325,14 +335,15 @@ export class Game {
         this.consume(p, slot);
         const to = [r2(lx), r2(floorY(lx, lz)), r2(lz)];
         this.emit({ e: 'throw', from: [r2(p.x), r2(p.y + 1.4), r2(p.z)], to, by: p.id });
-        this.pending.push({ t: this.time + 0.75, fn: () => { this.emit({ e: 'smash', p: to }); this.noise(lx, lz, 26); } });
+        const origin = { x: p.x, z: p.z };
+        this.pending.push({ t: this.time + 0.75, fn: () => { this.emit({ e: 'smash', p: to }); this.noise(lx, lz, 26, null, { kind: 'bottle', origin }); } });
         break;
       }
       case 'bell': {
         this.consume(p, slot);
         this.emit({ e: 'bell', p: [r2(p.x), r2(p.y + 1.2), r2(p.z)], by: p.id });
         const d = dist(p.x, p.z, this.monster.x, this.monster.z);
-        if (d < 16) { this.monster.repel(9); this.msg(p, 'The bell cracks in your hand. Something recoils from the sound.', 'good'); }
+        if (d < 16) { this.monster.repel(this.D.bell); this.msg(p, 'The bell cracks in your hand. Something recoils from the sound.', 'good'); }
         else this.msg(p, 'The bell cracks in your hand. Nothing was close enough to hear it... you hope.', 'info');
         break;
       }
@@ -378,7 +389,7 @@ export class Game {
     p.hp -= 1;
     p.reviving = null;
     if (p.hp <= 0) {
-      p.state = 'downed'; p.bleed = BLEED_TIME; p.hp = 0;
+      p.state = 'downed'; p.bleed = this.D.bleed; p.hp = 0;
       this.announce(`${p.name} is down! Reach them and hold your ground — press E to revive.`, 'bad');
     }
     this.emit({ e: 'hit', id: p.id });
@@ -421,7 +432,7 @@ export class Game {
     if (this.over) return;
     this.over = true;
     const summary = {
-      win, time: Math.round(this.time), stage: this.stage(), obj: this.obj,
+      win, time: Math.round(this.time), stage: this.stage(), obj: this.obj, difficulty: this.difficulty,
       players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, state: p.state, t: p.escapedAt || null })),
     };
     this.onEnd(summary);
@@ -474,10 +485,11 @@ export class Game {
     // randomised paranormal events (purely atmospheric, except falling objects make real noise)
     this.paraT -= dt;
     if (this.paraT <= 0) { this.paraT = rand(22, 50) - this.stage() * 2; this.paranormal(); }
+    for (const p of this.players.values()) if (this.time - p.lastT > 0.4) { p.vx *= 0.8; p.vz *= 0.8; } // stale velocity decays
 
     const snap = { t: Math.round(this.time * 1000), p: [], m: this.monster.snap() };
     for (const p of this.players.values()) {
-      if ((p.state === 'alive' || p.state === 'downed') && p.hidden < 0) snap.p.push([p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.ry), r2(p.rx), p.flags]);
+      if ((p.state === 'alive' || p.state === 'downed') && p.hidden < 0) snap.p.push([p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.ry), r2(p.rx), p.flags, p.inv[p.sel] ? ITEM_TYPES.indexOf(p.inv[p.sel].type) : 0]);
     }
     this.send('g:snap', snap);
   }

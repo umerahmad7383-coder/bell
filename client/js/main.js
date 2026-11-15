@@ -4,7 +4,8 @@ import RAPIER from '../vendor/rapier.es.js';
 import { io } from '../vendor/socket.io.esm.min.js';
 import { Game } from './game.js';
 import { AudioSys } from './audio.js';
-import { PLAYER_COLORS } from './entities.js';
+import { PLAYER_COLORS, PlayerModel } from './entities.js';
+import { DIFFICULTY, DIFFICULTY_ORDER, LOOKS, LOOK_KEYS, LOOK_LABELS, cleanLook, randomLook } from '../shared/defs.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -16,32 +17,57 @@ window.addEventListener('error', (e) => console.error('[last-bell]', e.message, 
 
 // ---------------------------------------------------------------- settings
 const store = { get(k, d) { try { const v = localStorage.getItem('lastbell.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('lastbell.' + k, JSON.stringify(v)); } catch { /* private mode */ } } };
-const settings = { sens: 1, vol: 0.8, fov: 75, bright: 1, quality: 'medium', ...store.get('settings', {}) };
+const settings = { sens: 1, vol: 0.8, fov: 75, bright: 1, quality: 'medium', dynres: true, showfps: false, ...store.get('settings', {}) };
 const audio = new AudioSys(); audio.volume = settings.vol;
 for (const [id, key, num] of [['set-sens', 'sens', 1], ['set-vol', 'vol', 1], ['set-fov', 'fov', 1], ['set-bright', 'bright', 1], ['set-quality', 'quality', 0]]) {
   const el = $(id); el.value = settings[key];
   el.addEventListener('input', () => { settings[key] = num ? Number(el.value) : el.value; store.set('settings', settings); audio.setVolume(settings.vol); if (game) game.applySettings(); });
 }
 
+for (const [id, key] of [['set-dynres', 'dynres'], ['set-showfps', 'showfps']]) {
+  const el = $(id); el.checked = !!settings[key];
+  el.addEventListener('change', () => { settings[key] = el.checked; store.set('settings', settings); });
+}
+
 // ---------------------------------------------------------------- renderer (one WebGL context for the whole session)
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ canvas: $('view'), antialias: true, powerPreference: 'high-performance' });
+  renderer = new THREE.WebGLRenderer({ canvas: $('view'), antialias: settings.quality !== 'low', powerPreference: 'high-performance', stencil: false });
   renderer.setSize(innerWidth, innerHeight, false);
+  // If the browser is drawing with the CPU instead of the graphics card, nothing in the game can make it smooth: say so.
+  const gl = renderer.getContext(), dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const gpu = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
+  if (/swiftshader|llvmpipe|software|basic render/i.test(gpu)) { const w = $('gpu-warn'); w.hidden = false; w.textContent = 'Your browser is rendering without the graphics card, so the game will be slow. Turn on "Use graphics acceleration when available" in the browser settings and restart it.'; }
 } catch (err) { fatal('This browser could not start WebGL, which the game needs.\n\nTry a current version of Chrome, Edge or Firefox with hardware acceleration enabled.\n\n' + err.message); throw err; }
 { // TV-static overlay texture
   const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d'); const d = x.createImageData(128, 128);
-  for (let i = 0; i < d.data.length; i += 4) { const v = Math.random() * 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+  for (let i = 0; i < d.data.length; i += 4) { const v = 120 + Math.random() * 135; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = Math.random() < 0.55 ? Math.random() * 255 : 0; }
   x.putImageData(d, 0, 0); $('fx-static').style.backgroundImage = `url(${c.toDataURL()})`;
 }
 
 // ---------------------------------------------------------------- screens
 const MAIN = ['s-menu', 's-lobby', 's-loading'];
-const OVER = ['s-join', 's-settings', 's-controls', 's-pause', 's-end'];
+const OVER = ['s-join', 's-settings', 's-controls', 's-pause', 's-end', 's-character'];
 function show(id) { for (const s of MAIN) $(s).hidden = s !== id; }
 function overlay(id, on = true) { $(id).hidden = !on; }
 const closeOverlays = () => OVER.forEach((o) => ($(o).hidden = true));
-document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => { b.closest('.screen').hidden = true; }));
+// Settings / Controls can be opened from the main menu or from the in-game pause panel. They replace
+// the panel they were opened from (instead of stacking on top of it) and return to it when closed.
+let subFrom = null;
+function openSub(id) {
+  subFrom = !$('s-pause').hidden ? 's-pause' : null;
+  if (subFrom) overlay(subFrom, false);
+  overlay('s-settings', false); overlay('s-controls', false);
+  overlay(id);
+}
+function closeSub(el) {
+  el.hidden = true;
+  if ((el.id === 's-settings' || el.id === 's-controls') && subFrom && game && !game.ended) overlay(subFrom);
+  subFrom = null;
+  if (el.id === 's-character') closePreview();
+}
+document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => closeSub(b.closest('.screen'))));
+document.addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; for (const id of ['s-settings', 's-controls', 's-join', 's-character']) if (!$(id).hidden) { closeSub($(id)); e.preventDefault(); return; } });
 document.addEventListener('click', (e) => { if (e.target.tagName === 'BUTTON') { audio.init(); audio.ui(); } });
 
 // ---------------------------------------------------------------- state
@@ -50,6 +76,58 @@ const nameInput = $('name');
 nameInput.value = store.get('name', '');
 nameInput.addEventListener('input', () => store.set('name', nameInput.value));
 const myName = () => nameInput.value.trim() || 'Student';
+
+// ---------------------------------------------------------------- character creator
+let look = cleanLook(store.get('look', null) || randomLook());
+store.set('look', look);
+let preview = null;
+function renderLookOptions() {
+  $('char-options').innerHTML = LOOK_KEYS.map((k) => {
+    const isColor = LOOKS[k][0][0] === '#';
+    const inner = LOOKS[k].map((v, i) => isColor
+      ? `<button data-k="${k}" data-i="${i}" class="${look[k] === i ? 'sel' : ''}" style="background:${v}" title="${LOOK_LABELS[k]} ${i + 1}" aria-label="${LOOK_LABELS[k]} ${i + 1}"></button>`
+      : `<button data-k="${k}" data-i="${i}" class="${look[k] === i ? 'sel' : ''}">${v}</button>`).join('');
+    return `<div class="opt"><span>${LOOK_LABELS[k]}</span><div class="${isColor ? 'sw' : 'pick'}">${inner}</div></div>`;
+  }).join('');
+}
+function setLook(next) {
+  look = cleanLook(next); store.set('look', look);
+  renderLookOptions();
+  if (preview) preview.rebuild();
+  if (lobby) socket.emit('lobby:look', look);
+}
+$('char-options').addEventListener('click', (e) => { const b = e.target.closest('button[data-k]'); if (b) setLook({ ...look, [b.dataset.k]: Number(b.dataset.i) }); });
+$('btn-char-random').onclick = () => setLook(randomLook());
+function openCharacter() {
+  renderLookOptions(); overlay('s-character');
+  if (preview) return;
+  // a small second renderer, alive only while this panel is open
+  const canvas = $('char-canvas');
+  const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  r.setPixelRatio(Math.min(devicePixelRatio || 1, 2)); r.setSize(300, 420, false);
+  const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(32, 300 / 420, 0.1, 20);
+  cam.position.set(0, 1.05, 3.9); cam.lookAt(0, 0.92, 0);
+  scene.add(new THREE.AmbientLight(0xffffff, 1.1));
+  const key = new THREE.DirectionalLight(0xfff1d6, 2.2); key.position.set(1.5, 3, 2.5); scene.add(key);
+  const rim = new THREE.DirectionalLight(0x7fa0ff, 1.2); rim.position.set(-2, 2, -2); scene.add(rim);
+  let model = null, t = 0, last = performance.now(), raf = 0;
+  const rebuild = () => { if (model) { scene.remove(model.group); model.dispose(); } model = new PlayerModel('', 0, look, { noTag: true }); scene.add(model.group); };
+  rebuild();
+  const tick = () => {
+    raf = requestAnimationFrame(tick);
+    const now = performance.now(), dt = Math.min(0.05, (now - last) / 1000); last = now; t += dt;
+    const cyc = t % 16; // stand, walk, run, crouch — so you can see how the body moves
+    const speed = cyc < 3 ? 0 : cyc < 8 ? 2.75 : cyc < 12 ? 5.3 : 1.2;
+    model.group.rotation.y = t * 0.6;
+    model.update(dt, { speed, crouch: cyc >= 12, downed: false, pitch: 0, flash: false, hurt: false });
+    r.render(scene, cam);
+  };
+  tick();
+  preview = { rebuild, close() { cancelAnimationFrame(raf); if (model) model.dispose(); r.dispose(); r.forceContextLoss(); } };
+}
+function closePreview() { if (preview) { preview.close(); preview = null; } }
+$('btn-character').onclick = openCharacter;
+$('btn-lobby-character').onclick = openCharacter;
 
 // ---------------------------------------------------------------- connection
 const socket = io(SERVER, { transports: ['websocket', 'polling'] });
@@ -67,13 +145,13 @@ socket.on('disconnect', () => {
 });
 
 // ---------------------------------------------------------------- menu
-$('btn-create').onclick = () => socket.emit('lobby:create', { name: myName() }, (r) => { if (r && r.ok) enterLobby(r); });
-$('btn-solo').onclick = () => socket.emit('lobby:create', { name: myName() }, (r) => { if (r && r.ok) { enterLobby(r); socket.emit('lobby:start', null, () => {}); } });
+$('btn-create').onclick = () => socket.emit('lobby:create', { name: myName(), look }, (r) => { if (r && r.ok) enterLobby(r); });
+$('btn-solo').onclick = () => socket.emit('lobby:create', { name: myName(), look }, (r) => { if (r && r.ok) { enterLobby(r); socket.emit('lobby:start', null, () => {}); } });
 $('btn-join').onclick = () => { $('join-error').textContent = ''; overlay('s-join'); $('code').focus(); };
-$('btn-settings').onclick = () => overlay('s-settings');
-$('btn-controls').onclick = () => overlay('s-controls');
-$('btn-pause-settings').onclick = () => overlay('s-settings');
-$('btn-pause-controls').onclick = () => overlay('s-controls');
+$('btn-settings').onclick = () => openSub('s-settings');
+$('btn-controls').onclick = () => openSub('s-controls');
+$('btn-pause-settings').onclick = () => openSub('s-settings');
+$('btn-pause-controls').onclick = () => openSub('s-controls');
 $('btn-fullscreen').onclick = async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
@@ -85,7 +163,7 @@ codeInput.addEventListener('input', () => { codeInput.value = codeInput.value.to
 codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-join-go').click(); });
 $('btn-join-go').onclick = () => {
   if (codeInput.value.length !== 6) { $('join-error').textContent = 'Room codes are six characters.'; return; }
-  socket.emit('lobby:join', { code: codeInput.value, name: myName() }, (r) => {
+  socket.emit('lobby:join', { code: codeInput.value, name: myName(), look }, (r) => {
     if (!r || !r.ok) { $('join-error').textContent = (r && r.error) || 'Could not join.'; return; }
     overlay('s-join', false); enterLobby(r);
   });
@@ -110,6 +188,7 @@ $('btn-leave').onclick = leave;
 $('btn-end-leave').onclick = leave;
 $('btn-quit').onclick = leave;
 function leave() { socket.emit('lobby:leave'); lobby = null; stopGame(); closeOverlays(); show('s-menu'); }
+$('difficulties').addEventListener('click', (e) => { const el = e.target.closest('[data-diff]'); if (el && lobby && lobby.hostId === myId) socket.emit('lobby:difficulty', el.dataset.diff); });
 $('btn-ready').onclick = () => { const me = lobby && lobby.players.find((p) => p.id === myId); if (me) socket.emit('lobby:ready', !me.ready); };
 $('btn-start').onclick = () => socket.emit('lobby:start', null, (r) => { $('lobby-error').textContent = r && !r.ok ? r.error : ''; });
 $('btn-rematch').onclick = () => socket.emit('lobby:return');
@@ -131,7 +210,7 @@ socket.on('lobby:update', (l) => {
   const amHost = l.hostId === myId, me = l.players.find((p) => p.id === myId);
   $('lobby-code').textContent = l.code;
   $('lobby-count').textContent = `${l.players.length} / ${l.max}`;
-  $('lobby-players').innerHTML = l.players.map((p, i) => `<li class="${p.id === myId ? 'me' : ''}"><span class="dot" style="background:${PLAYER_COLORS[i % 8]}"></span><span class="nm">${esc(p.name)}${p.id === myId ? ' <span class="dim">(you)</span>' : ''}</span>${p.id === l.hostId ? '<span class="tag host">Host</span>' : p.ready ? '<span class="tag ready">Ready</span>' : '<span class="tag">Not ready</span>'}</li>`).join('');
+  $('lobby-players').innerHTML = l.players.map((p, i) => `<li class="${p.id === myId ? 'me' : ''}"><span class="dot" style="background:${LOOKS.top[cleanLook(p.look, i).top]}"></span><span class="nm">${esc(p.name)}${p.id === myId ? ' <span class="dim">(you)</span>' : ''}</span>${p.id === l.hostId ? '<span class="tag host">Host</span>' : p.ready ? '<span class="tag ready">Ready</span>' : '<span class="tag">Not ready</span>'}</li>`).join('');
   $('btn-start').hidden = !amHost; $('btn-ready').hidden = amHost;
   $('btn-ready').textContent = me && me.ready ? 'Ready ✓ (click to cancel)' : 'Ready up';
   $('btn-ready').classList.toggle('on', !!(me && me.ready));
@@ -139,6 +218,9 @@ socket.on('lobby:update', (l) => {
   $('btn-start').disabled = l.state === 'playing' || waiting > 0;
   $('lobby-note').textContent = l.state === 'playing' ? (me && me.inGame ? '' : 'A match is in progress. You will join the next round when it ends.')
     : amHost ? (waiting ? `Waiting for ${waiting} player${waiting > 1 ? 's' : ''} to ready up.` : l.players.length < 2 ? 'You can start alone to practise, or wait for friends to join.' : 'Everyone is ready.') : 'The host starts the match once everyone is ready.';
+  // difficulty: the host picks, everyone sees it
+  $('diff-note').textContent = amHost ? '' : '(the host chooses)';
+  $('difficulties').innerHTML = DIFFICULTY_ORDER.map((k) => `<div class="mode${k === l.difficulty ? ' sel' : ''}${amHost && l.state !== 'playing' ? '' : ' locked'}" data-diff="${k}"><b>${DIFFICULTY[k].label}</b><span>${DIFFICULTY[k].blurb}</span></div>`).join('');
   $('btn-rematch').hidden = !amHost;
   $('end-note').textContent = amHost ? '' : 'Waiting for the host to start a rematch…';
   // rematch: host sent everyone back to the lobby
@@ -186,7 +268,8 @@ socket.on('game:over', (sum) => {
   const escaped = sum.players.filter((p) => p.state === 'escaped').length;
   $('end-title').textContent = sum.win ? (escaped === sum.players.length ? 'EVERYONE ESCAPED' : 'ESCAPED') : 'CLASS IS NOT DISMISSED';
   $('end-title').classList.toggle('lose', !sum.win);
-  $('end-sub').textContent = sum.win ? `${escaped} of ${sum.players.length} made it out in ${mins}:${secs}.` : `Nobody left the school. You lasted ${mins}:${secs} and completed ${sum.stage} of 6 steps.`;
+  const diff = DIFFICULTY[sum.difficulty] ? ` Difficulty: ${DIFFICULTY[sum.difficulty].label}.` : '';
+  $('end-sub').textContent = (sum.win ? `${escaped} of ${sum.players.length} made it out in ${mins}:${secs}.` : `Nobody left the school. You lasted ${mins}:${secs} and completed ${sum.stage} of 6 steps.`) + diff;
   $('end-table').innerHTML = sum.players.map((p) => `<tr><td>${esc(p.name)}${p.id === myId ? ' <span class="dim">(you)</span>' : ''}</td><td class="st-${p.state === 'escaped' ? 'escaped' : 'dead'}">${p.state === 'escaped' ? `Survived · out at ${Math.floor(p.t / 60)}:${String(p.t % 60).padStart(2, '0')}` : 'Did not survive'}</td></tr>`).join('');
   setTimeout(() => overlay('s-end'), 1200);
 });

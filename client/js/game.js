@@ -6,11 +6,14 @@ import { buildTextures } from './textures.js';
 import { buildWorld } from './world.js';
 import { buildPhysics, EYE_STAND, EYE_CROUCH, EYE_DOWNED } from './physics.js';
 import { MonsterModel, PlayerModel, PLAYER_COLORS } from './entities.js';
+import { ViewModel } from './viewmodel.js';
+import { ITEM_TYPES, DIFFICULTY } from '../shared/defs.js';
 
 export const QUALITY = {
-  low: { maxDpr: 1, scale: 0.75, shadows: false, shadowSize: 0, lights: 3, spots: 1 },
-  medium: { maxDpr: 1, scale: 1, shadows: true, shadowSize: 1024, lights: 5, spots: 2 },
-  high: { maxDpr: 1.5, scale: 1, shadows: true, shadowSize: 2048, lights: 7, spots: 3 },
+  // lights = ceiling lights that are real light sources once the power is on; darkLights = while it is off
+  low: { maxDpr: 1, scale: 0.75, shadows: false, shadowSize: 0, lights: 2, darkLights: 1, spots: 1, gloss: false },
+  medium: { maxDpr: 1, scale: 1, shadows: true, shadowSize: 1024, lights: 4, darkLights: 2, spots: 2, gloss: false },
+  high: { maxDpr: 1.5, scale: 1, shadows: true, shadowSize: 2048, lights: 6, darkLights: 2, spots: 3, gloss: true },
 };
 export const ITEM_INFO = {
   fuse: ['Fuse', '⚡'], key_principal: ['Office Key', '🗝️'], key_gate: ['Gate Key', '🔑'], battery: ['Battery', '🔋'],
@@ -28,9 +31,12 @@ export class Game {
   constructor({ renderer, socket, init, settings, audio, RAPIER, ui }) {
     this.r = renderer; this.s = socket; this.set = settings; this.audio = audio; this.ui = ui;
     const Q = (this.Q = QUALITY[settings.quality] || QUALITY.medium);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, Q.maxDpr) * Q.scale);
+    // resolution: starts at the quality preset and is then tuned automatically to hold a smooth frame rate
+    this.basePR = Math.min(window.devicePixelRatio || 1, Q.maxDpr) * Q.scale;
+    this.res = { scale: 1, ceil: 1, ceilUntil: 0, acc: 0, n: 0, good: 0, raisedAt: -99 }; this.fps = 0;
+    renderer.setPixelRatio(this.basePR);
     renderer.shadowMap.enabled = Q.shadows;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap; // the soft variant costs several times more per pixel
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = settings.bright;
 
@@ -48,11 +54,12 @@ export class Game {
 
     // own flashlight, held slightly right of the eye so it throws visible shadows
     const fl = (this.flash = new THREE.SpotLight(0xfff1d6, 0, 32, 0.52, 0.6, 1.05));
-    fl.position.set(0.24, -0.2, 0.05); fl.target.position.set(0.05, -0.05, -6);
+    fl.position.set(-0.2, -0.2, 0.02); fl.target.position.set(-0.03, -0.04, -6); // it is in your left hand
     this.cam.add(fl, fl.target);
     if (Q.shadows) { fl.castShadow = true; fl.shadow.mapSize.setScalar(Q.shadowSize); fl.shadow.camera.near = 0.3; fl.shadow.camera.far = 30; fl.shadow.bias = -0.0015; fl.shadow.normalBias = 0.03; }
     this.spots = [];
-    for (let i = 0; i < Q.spots; i++) { const s = new THREE.SpotLight(0xfff1d6, 0, 26, 0.5, 0.6, 1.05); scene.add(s, s.target); this.spots.push(s); }
+    // teammates' torches: no point paying for spotlights nobody can be holding
+    for (let i = 0; i < Math.min(Q.spots, init.players.length - 1); i++) { const s = new THREE.SpotLight(0xfff1d6, 0, 26, 0.5, 0.6, 1.05); scene.add(s, s.target); this.spots.push(s); }
 
     this.monster = new MonsterModel(this.T); scene.add(this.monster.group);
     this.mbuf = [{ t: 0, x: init.monster[0], z: init.monster[1], ry: init.monster[2], st: init.monster[3], crawl: init.monster[4] }];
@@ -64,11 +71,19 @@ export class Game {
     init.players.forEach((p, i) => {
       this.roster.set(p.id, { id: p.id, name: p.name, state: p.state, hp: p.hp, hidden: -1, color: i });
       if (p.id !== this.id) {
-        const model = new PlayerModel(p.name, i); model.group.position.set(p.x, p.y, p.z); scene.add(model.group);
-        this.remotes.set(p.id, { id: p.id, model, buf: [], cur: { x: p.x, y: p.y, z: p.z, ry: 0, rx: 0, f: 0 }, speed: 0, stepD: 0, lastSnap: 0 });
-      } else { this.ph.teleport(p.x, p.y, p.z); }
+        const model = new PlayerModel(p.name, i, p.look); model.group.position.set(p.x, p.y, p.z); scene.add(model.group);
+        this.remotes.set(p.id, { id: p.id, model, buf: [], cur: { x: p.x, y: p.y, z: p.z, ry: 0, rx: 0, f: 0, h: 0 }, speed: 0, stepD: 0, lastSnap: 0 });
+      } else {
+        this.ph.teleport(p.x, p.y, p.z);
+        // your own body (headless, so the camera is not inside a skull) and first-person hands
+        this.body = new PlayerModel(p.name, i, p.look, { firstPerson: true }); scene.add(this.body.group);
+        this.vm = new ViewModel(p.look);
+      }
     });
     this.me = this.roster.get(this.id);
+    this.maxHp = init.maxHp || 2; this.difficulty = init.difficulty || 'intermediate';
+    this.frame = 0; this.prevYaw = -Math.PI / 2; this.prevPitch = 0;
+    if (Q.shadows) renderer.shadowMap.autoUpdate = false; // refreshed every second frame in the loop: halves the shadow cost
 
     // world state
     init.doors.forEach(([open, locked], i) => { this.world.setDoor(i, open, locked, true); this.ph.setDoor(i, !!open); });
@@ -83,7 +98,7 @@ export class Game {
     this.battery = 100; this.flashOn = true; this.threat = 0; this.shake = 0; this.hurtFlash = 0;
     this.keys = {}; this.chatOpen = false; this.locked = false; this.everLocked = false; this.ended = false;
     this.sendT = 0; this.hudT = 0; this.offset = null; this.lastSnapT = 0; this.time = 0; this.fx = [];
-    this.target = null; this.spec = null; this.revive = null; this.stingT = 0; this.camT = 0; this.lightningT = 0; this.roomShown = ''; this.roomT = 0;
+    this.targetT = 0; this.target = null; this.spec = null; this.revive = null; this.stingT = 0; this.camT = 0; this.lightningT = 0; this.roomShown = ''; this.roomT = 0;
     this.lastFeet = this.ph.getFeet();
 
     this.bind();
@@ -161,6 +176,7 @@ export class Game {
     const it = this.inv[this.sel];
     if (!it) return;
     if (it.type === 'bottle') this.audio.throwWhoosh();
+    if (['bottle', 'bell', 'battery', 'medkit'].includes(it.type)) this.vm.useItem(it.type);
     this.s.emit('g:use', { slot: this.sel, ry: this.yaw, rx: this.pitch });
   }
   interact() {
@@ -170,6 +186,7 @@ export class Game {
     if (!t) return;
     this.s.emit('g:interact', { k: t.k, id: t.id });
     if (t.k !== 'item') this.audio.click();
+    this.vm.reach();
   }
 
   // ------------------------------------------------------------------ network in
@@ -181,7 +198,7 @@ export class Game {
     for (const e of sn.p) {
       if (e[0] === this.id) continue;
       const r = this.remotes.get(e[0]); if (!r) continue;
-      r.buf.push({ t: sn.t, x: e[1], y: e[2], z: e[3], ry: e[4], rx: e[5], f: e[6] });
+      r.buf.push({ t: sn.t, x: e[1], y: e[2], z: e[3], ry: e[4], rx: e[5], f: e[6], h: e[7] || 0 });
       if (r.buf.length > 30) r.buf.shift();
       r.lastSnap = sn.t;
     }
@@ -251,7 +268,7 @@ export class Game {
     if (e.id === this.id) {
       if (e.state === 'downed') { this.bleed = e.bleed || 80; }
       if (e.state === 'alive' && prev === 'downed') { this.audio.heal(); }
-      if (e.state === 'alive' && e.hp === 2 && prev === 'alive') this.audio.heal();
+      if (e.state === 'alive' && e.hp === this.maxHp && prev === 'alive') this.audio.heal();
       if (e.state === 'dead' || e.state === 'escaped') { $('fx-locker').classList.remove('on'); this.cycleSpectate(); }
     } else if (this.spec === e.id && e.state !== 'alive' && e.state !== 'downed') this.cycleSpectate();
     this.renderTeam();
@@ -276,7 +293,7 @@ export class Game {
       case 'thunder': this.lightning(); break;
       case 'fall': {
         A.fall([p[0], p[1], p[2]]);
-        const m = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.3), new THREE.MeshStandardMaterial({ color: 0x5a2b24, roughness: 0.9 }));
+        const m = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.3), new THREE.MeshLambertMaterial({ color: 0x5a2b24 }));
         m.position.set(p[0], p[1] + 2.2, p[2]); this.scene.add(m);
         let t = 0;
         this.fx.push((dt) => { t += dt; if (t < 0.6) { m.position.y = p[1] + 2.2 - 2.15 * (t / 0.6) ** 2; m.rotation.x += dt * 9; m.rotation.z += dt * 5; } else { m.position.y = p[1] + 0.03; m.rotation.x = 0; m.rotation.z = 0; } if (t > 40) { this.scene.remove(m); return true; } });
@@ -302,7 +319,7 @@ export class Game {
     this.audio.thunder(Math.random());
   }
   spawnThrow(e) {
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 6), new THREE.MeshStandardMaterial({ color: 0x2f5a3a, emissive: 0x0a2010, roughness: 0.2 }));
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 6), new THREE.MeshLambertMaterial({ color: 0x2f5a3a, emissive: 0x0a2010 }));
     this.scene.add(m);
     const a = e.from, b = e.to; let t = 0;
     this.fx.push((dt) => { t += dt / 0.75; const k = Math.min(1, t); m.position.set(lerp(a[0], b[0], k), lerp(a[1], b[1], k) + Math.sin(k * Math.PI) * 1.4, lerp(a[2], b[2], k)); m.rotation.x += dt * 14; if (t >= 1) { this.scene.remove(m); return true; } });
@@ -319,21 +336,56 @@ export class Game {
   loop = () => {
     this.raf = requestAnimationFrame(this.loop);
     const now = performance.now();
-    const dt = Math.min(0.2, (now - this.clock) / 1000); // long frames are sub-stepped in the physics below, so low FPS never means slow motion
+    const raw = (now - this.clock) / 1000;
+    this.tunePerformance(raw);
+    const dt = Math.min(0.2, raw); // long frames are sub-stepped in the physics below, so low FPS never means slow motion
     this.clock = now; this.time += dt;
     if (dt <= 0) return;
     this.updateLocal(dt);
     this.updateRemotes(dt, now);
     this.updateMonster(dt, now);
     this.updateEffects(dt);
-    this.updateTarget();
+    this.targetT -= dt; if (this.targetT <= 0) { this.targetT = 0.07; this.updateTarget(); }
     for (let i = this.fx.length - 1; i >= 0; i--) if (this.fx[i](dt)) this.fx.splice(i, 1);
     this.world.update(dt, this.time, this.cam.position);
     this.audio.setListener(this.cam.position, this.cam.rotation.y);
     this.audio.update(dt, this.ended ? 0 : this.threat, this.ended ? null : this.m, this.world.power);
     this.hudT -= dt; if (this.hudT <= 0) { this.hudT = 0.1; this.updateHud(); }
+    // shadows are re-rendered every second frame (the one-frame lag is invisible, the saving is not)
+    if (this.Q.shadows) this.r.shadowMap.needsUpdate = (this.frame++ & 1) === 0;
     this.r.render(this.scene, this.cam);
+    // first-person hands: second tiny pass on top, with depth cleared so they never clip into walls
+    if (this.vmActive) { this.r.autoClear = false; this.r.clearDepth(); this.r.render(this.vm.scene, this.vm.cam); this.r.autoClear = true; }
   };
+
+  /**
+   * Keeps the game smooth on any GPU: measures the real frame rate once a second and lowers the
+   * internal render resolution when it drops below ~50 fps, raising it again when there is headroom.
+   */
+  tunePerformance(raw) {
+    const r = this.res;
+    if (raw > 0.5 || document.hidden) { r.acc = 0; r.n = 0; return; } // tab was in the background
+    r.acc += raw; r.n++;
+    if (r.acc < 1) return;
+    const fps = r.n / r.acc; r.acc = 0; r.n = 0; this.fps = fps;
+    const el = $('fps');
+    if (this.set.showfps) { el.hidden = false; el.textContent = `${Math.round(fps)} fps · ${Math.round(r.scale * 100)}% res`; } else el.hidden = true;
+    if (!this.set.dynres) { if (r.scale !== 1) this.setResScale(1); return; }
+    if (this.time < 4) return; // ignore start-up hitches (shader compilation)
+    if (this.time > r.ceilUntil) r.ceil = 1;
+    if (fps < 48 && r.scale > 0.5) {
+      const next = Math.max(0.5, r.scale * (fps < 34 ? 0.78 : 0.88));
+      if (this.time - r.raisedAt < 6) { r.ceil = next; r.ceilUntil = this.time + 60; } // the last increase was too much: stay below it for a while
+      r.good = 0; this.setResScale(next);
+    } else if (fps > 56 && r.scale < r.ceil) {
+      if (++r.good >= 4) { r.good = 0; r.raisedAt = this.time; this.setResScale(Math.min(r.ceil, r.scale * 1.12)); }
+    } else r.good = 0;
+  }
+  setResScale(v) {
+    this.res.scale = v;
+    this.r.setPixelRatio(this.basePR * v);
+    this.r.setSize(innerWidth, innerHeight, false);
+  }
 
   updateLocal(dt) {
     const me = this.me, K = this.keys, ph = this.ph;
@@ -398,8 +450,30 @@ export class Game {
       this.sendT = 1 / SEND_HZ;
       const lit = this.flashOn && this.battery > 0;
       const flags = (crouch ? 1 : 0) | (lit ? 2 : 0) | (this.sprinting ? 4 : 0) | (real > 0.5 ? 8 : 0);
-      this.s.volatile.emit('g:state', [+f.x.toFixed(3), +f.y.toFixed(3), +f.z.toFixed(3), +this.yaw.toFixed(3), +this.pitch.toFixed(3), flags]);
+      this.s.volatile.emit('g:state', [+f.x.toFixed(3), +f.y.toFixed(3), +f.z.toFixed(3), +this.yaw.toFixed(3), +this.pitch.toFixed(3), flags, this.sel]);
     }
+    // ---- your own body and hands ----
+    const firstPerson = (me.state === 'alive' || me.state === 'downed') && me.hidden < 0 && !this.ended;
+    const lit = this.flashOn && this.battery > 0;
+    const body = this.body.group;
+    body.visible = firstPerson && !downed;
+    if (body.visible) {
+      const back = 0.16 + this.body.crouchK * 0.2; // stand just behind the camera so you see chest, legs and feet when you look down
+      body.position.set(f.x + sy * back, f.y, f.z + cy * back);
+      body.rotation.y = this.yaw + Math.PI;
+      this.body.setArmVisible(0, !lit); this.body.setArmVisible(1, !this.vm.held);
+      this.body.update(dt, { speed: real, crouch, downed: false, pitch: 0, flash: false, hurt: me.hp < this.maxHp });
+    }
+    const held = this.inv[this.sel];
+    this.vm.setHeld(firstPerson && !downed && held ? held.type : null);
+    this.vmActive = firstPerson;
+    const dyaw = this.yaw - this.prevYaw, dpitch = this.pitch - this.prevPitch; this.prevYaw = this.yaw; this.prevPitch = this.pitch;
+    this.vm.update(dt, {
+      active: firstPerson, flash: lit, speed: real, sprint: this.sprinting, crouch, bob: (this.bobT / (crouch ? 1.0 : sprint ? 2.1 : 1.5)) * Math.PI,
+      dyaw: dyaw / Math.max(dt, 0.001) * 0.016, dpitch: dpitch / Math.max(dt, 0.001) * 0.016, time: this.time,
+      light: 0.3 + (lit ? 0.75 : 0) + (this.world.power ? 0.45 : 0) + (this.lightningT > 0.3 ? 1 : 0),
+    });
+
     if (downed) this.bleed = Math.max(0, (this.bleed || 0) - dt);
     if (this.revive) this.revive.t += dt;
   }
@@ -416,7 +490,7 @@ export class Game {
         const k = b.t > a.t ? clamp((rt - a.t) / (b.t - a.t), 0, 1) : 1;
         const c = r.cur, ox = c.x, oz = c.z;
         c.x = lerp(a.x, b.x, k); c.y = lerp(a.y, b.y, k); c.z = lerp(a.z, b.z, k);
-        c.ry = lerpAngle(a.ry, b.ry, k); c.rx = lerp(a.rx, b.rx, k); c.f = b.f;
+        c.ry = lerpAngle(a.ry, b.ry, k); c.rx = lerp(a.rx, b.rx, k); c.f = b.f; c.h = b.h;
         const sp = Math.hypot(c.x - ox, c.z - oz) / dt;
         r.speed = lerp(r.speed, Math.min(sp, 8), Math.min(1, dt * 10));
       }
@@ -427,7 +501,8 @@ export class Game {
       const c = r.cur;
       g.position.set(c.x, c.y, c.z); g.rotation.y = c.ry + Math.PI;
       const flash = !!(c.f & 2);
-      r.model.update(dt, r.speed, !!(c.f & 1), p.state === 'downed', c.rx, flash);
+      r.model.setHeld(c.h);
+      r.model.update(dt, { speed: r.speed, crouch: !!(c.f & 1), downed: p.state === 'downed', pitch: c.rx, flash, hurt: p.hp < this.maxHp && p.state === 'alive' });
       const d = Math.hypot(c.x - this.cam.position.x, c.z - this.cam.position.z);
       r.model.tag.material.opacity = d < 14 ? 0.85 : Math.max(0, 0.85 - (d - 14) * 0.2);
       if (flash) lit.push({ r, d });
@@ -508,11 +583,13 @@ export class Game {
 
     // screen distortion
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 0.8);
-    const hurt = me.state === 'downed' ? 0.85 + Math.sin(this.time * 3) * 0.1 : me.state === 'alive' && me.hp === 1 ? 0.35 + Math.sin(this.time * 2.2) * 0.06 : 0;
+    const hurt = me.state === 'downed' ? 0.85 + Math.sin(this.time * 3) * 0.1 : me.state === 'alive' && me.hp < this.maxHp ? (me.hp === 1 ? 0.35 : 0.16) + Math.sin(this.time * 2.2) * 0.06 : 0;
     const st = clamp(this.threat * this.threat * 0.42 + this.hurtFlash * 0.6, 0, 0.7);
     const q = Math.round(st * 40) / 40, hq = Math.round(Math.max(hurt, this.hurtFlash) * 30) / 30;
-    if (q !== this._st) { this._st = q; $('fx-static').style.opacity = q; this.r.domElement.style.filter = q > 0.08 ? `saturate(${(1 - q).toFixed(2)}) contrast(${(1 + q * 0.5).toFixed(2)})` : ''; }
-    if (hq !== this._hq) { this._hq = hq; $('fx-vignette').style.setProperty('--hurt', hq); }
+    // PERFORMANCE: these overlays only ever change `opacity`, which the browser composites on the GPU
+    // without repainting. (CSS filters / blend modes on top of a WebGL canvas cost a full-screen pass.)
+    if (q !== this._st) { this._st = q; const el = $('fx-static'); el.style.display = q > 0.01 ? 'block' : 'none'; el.style.opacity = q; }
+    if (hq !== this._hq) { this._hq = hq; const el = $('fx-hurt'); el.style.display = hq > 0.01 ? 'block' : 'none'; el.style.opacity = hq; }
 
     // security monitors
     this.camT -= dt;
@@ -595,14 +672,14 @@ export class Game {
     $('notes').innerHTML = this.notes.length ? this.notes.map((n) => `<p>${esc(n)}</p>`).join('') : '<p class="dim">Nothing yet. Notes are shared with everyone when picked up.</p>';
   }
   renderTeam() {
-    $('teamlist').innerHTML = [...this.roster.values()].map((p) => `<div class="${p.state}">${esc(p.name)}${p.id === this.id ? ' (you)' : ''}${p.state === 'downed' ? ' — DOWN' : p.state === 'escaped' ? ' — OUT' : p.state === 'alive' && p.hp === 1 ? ' — hurt' : ''}</div>`).join('');
+    $('teamlist').innerHTML = [...this.roster.values()].map((p) => `<div class="${p.state}">${esc(p.name)}${p.id === this.id ? ' (you)' : ''}${p.state === 'downed' ? ' — DOWN' : p.state === 'escaped' ? ' — OUT' : p.state === 'alive' && p.hp < this.maxHp ? ' — hurt' : ''}</div>`).join('');
   }
   updateHud() {
     const me = this.me;
     const st = $('bar-stamina'), bt = $('bar-battery');
     st.querySelector('i').style.width = `${this.stamina}%`; st.classList.toggle('low', this.exhausted);
     bt.querySelector('i').style.width = `${this.battery}%`; bt.classList.toggle('low', this.battery < 14);
-    const h = $('health'); h.textContent = me.state === 'alive' ? (me.hp >= 2 ? 'Unhurt' : 'Wounded — one more and you fall') : ''; h.classList.toggle('hurt', me.hp < 2);
+    const h = $('health'); h.textContent = me.state === 'alive' ? (me.hp >= this.maxHp ? (this.maxHp === 1 ? 'One hit and you fall' : 'Unhurt') : me.hp === 1 ? 'Wounded — one more and you fall' : 'Hurt') : ''; h.classList.toggle('hurt', me.hp < this.maxHp);
     let status = '';
     if (this.ended) status = '';
     else if (me.state === 'downed') status = `You are down<small>bleeding out in ${Math.ceil(this.bleed || 0)}s — a teammate can revive you with E</small>`;
@@ -619,6 +696,7 @@ export class Game {
   resize() {
     this.r.setSize(innerWidth, innerHeight, false);
     this.cam.aspect = innerWidth / innerHeight; this.cam.updateProjectionMatrix();
+    if (this.vm) this.vm.resize();
   }
   applySettings() {
     this.cam.fov = this.set.fov; this.cam.updateProjectionMatrix();
@@ -643,10 +721,10 @@ export class Game {
       if (o.isLight && o.shadow && o.shadow.map) o.shadow.map.dispose();
     });
     for (const k in this.T) this.T[k].dispose();
+    this.vm.dispose(); this.r.shadowMap.autoUpdate = true;
     this.r.renderLists.dispose();
     try { this.ph.world.free(); } catch { /* already freed */ }
-    $('hud').hidden = true; $('fx-locker').classList.remove('on'); $('fx-static').style.opacity = 0; $('fx-vignette').style.setProperty('--hurt', 0);
-    this.r.domElement.style.filter = ''; $('toasts').innerHTML = ''; $('chatlog').innerHTML = ''; $('status').innerHTML = ''; $('notebook').hidden = true;
+    $('hud').hidden = true; $('fx-locker').classList.remove('on'); $('fx-static').style.display = 'none'; $('fx-hurt').style.display = 'none'; $('fps').hidden = true; $('toasts').innerHTML = ''; $('chatlog').innerHTML = ''; $('status').innerHTML = ''; $('notebook').hidden = true;
     if (window.__lb === this) window.__lb = null;
   }
 }

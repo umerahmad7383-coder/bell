@@ -80,7 +80,7 @@ try {
   console.log('LOBBY');
   const a = new Bot('Ana'), b = new Bot('Ben'), c = new Bot('Cy');
   await sleep(300);
-  const created = await a.call('lobby:create', { name: 'Ana' });
+  const created = await a.call('lobby:create', { name: 'Ana', look: { top: 3, hair: 1, build: 99, skin: 'x' } });
   assert(created.ok && /^[A-Z2-9]{6}$/.test(created.code), `host created lobby with 6-char code ${created.code}`);
   const bad = await b.call('lobby:join', { code: 'ZZZZZZ', name: 'Ben' });
   assert(!bad.ok, 'joining a wrong code is rejected');
@@ -89,6 +89,12 @@ try {
   await sleep(150);
   assert(a.lobby.players.length === 3 && b.lobby.players.length === 3, 'all clients see 3 players in the lobby');
   assert(new Set(a.lobby.players.map((p) => p.name)).size === 3, `duplicate names are made unique (${a.lobby.players.map((p) => p.name).join(', ')})`);
+  const anaLook = a.lobby.players[0].look;
+  assert(anaLook.top === 3 && anaLook.hair === 1 && anaLook.build === 0 && anaLook.skin === 0, 'character look is stored, and invalid values are sanitised by the server');
+  b.s.emit('lobby:difficulty', 'nightmare'); await sleep(100);
+  assert(a.lobby.difficulty === 'intermediate', 'a guest cannot change the difficulty');
+  a.s.emit('lobby:difficulty', 'beginner'); await sleep(100);
+  assert(b.lobby.difficulty === 'beginner', 'the host can, and everyone sees it');
   assert(!(await b.call('lobby:start')).ok, 'non-host cannot start');
   assert(!(await a.call('lobby:start')).ok, 'host cannot start until everyone is ready');
   b.s.emit('lobby:ready', true); c.s.emit('lobby:ready', true);
@@ -98,6 +104,7 @@ try {
   assert(a.g && b.g && c.g, 'every client received game:start');
   assert(a.g.items.length === b.g.items.length && a.g.items.length > 15, `item list is synchronised (${a.g.items.length} items)`);
   assert(a.g.items.filter((i) => i.type === 'fuse').length === 3, 'three fuses spawned');
+  assert(b.g.difficulty === 'beginner' && b.g.maxHp === 3 && b.g.players.find((p) => p.id === a.id).look.top === 3, 'match starts on the chosen difficulty (3 hits on Beginner) with every player\'s look');
 
   console.log('SYNC');
   await sleep(400);
@@ -129,6 +136,8 @@ try {
   const other = carrier === a ? b : a;
   await carrier.pickup('fuse'); await carrier.pickup('fuse');
   assert(carrier.inv.filter((s) => s && s.type === 'fuse').length === 3, 'carrier holds 3 fuses');
+  carrier.send(); await sleep(200);
+  assert(other.lastSnap.p.find((p) => p[0] === carrier.id)[7] === 1, 'other players are told what the carrier is holding (so they can see it in their hand)');
   // drop & share
   carrier.s.emit('g:drop', carrier.inv.findIndex((s) => s && s.type === 'fuse'));
   await sleep(150);

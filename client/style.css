@@ -10,9 +10,10 @@ html, body { margin: 0; height: 100%; background: #020203; color: var(--ink); fo
 canvas#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
 /* ---------- full-screen effect layers ---------- */
-#fx-vignette, #fx-static, #fx-flash, #fx-locker { position: fixed; inset: 0; pointer-events: none; }
-#fx-vignette { background: radial-gradient(ellipse at center, transparent 42%, rgba(0, 0, 0, 0.82) 100%); --hurt: 0; box-shadow: inset 0 0 calc(var(--hurt) * 260px) calc(var(--hurt) * 70px) rgba(120, 0, 0, calc(var(--hurt) * 0.75)); }
-#fx-static { opacity: 0; mix-blend-mode: screen; background-size: 256px 256px; animation: static 0.28s steps(4) infinite; }
+#fx-vignette, #fx-hurt, #fx-static, #fx-flash, #fx-locker { position: fixed; inset: 0; pointer-events: none; }
+#fx-vignette { background: radial-gradient(ellipse at center, transparent 42%, rgba(0, 0, 0, 0.82) 100%); }
+#fx-hurt { display: none; opacity: 0; will-change: opacity; background: radial-gradient(ellipse at center, transparent 38%, rgba(110, 0, 0, 0.55) 78%, rgba(90, 0, 0, 0.9) 100%); }
+#fx-static { display: none; opacity: 0; will-change: opacity; background-size: 256px 256px; animation: static 0.28s steps(4) infinite; }
 @keyframes static { 0% { background-position: 0 0; } 25% { background-position: -70px 40px; } 50% { background-position: 90px -110px; } 75% { background-position: -30px 150px; } 100% { background-position: 60px -20px; } }
 #fx-flash { background: #cfe0ff; opacity: 0; }
 #fx-locker { opacity: 0; transition: opacity 0.25s; background:
@@ -24,7 +25,9 @@ canvas#view { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
 #screens { position: fixed; inset: 0; pointer-events: none; }
 .screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; pointer-events: auto; padding: 24px;
   background: radial-gradient(ellipse at 50% 30%, #17100f 0%, #060506 55%, #010101 100%); }
-.screen.overlay { background: rgba(0, 0, 0, 0.72); backdrop-filter: blur(3px); z-index: 5; }
+.screen.overlay { background: rgba(0, 0, 0, 0.78); z-index: 5; }
+/* settings and controls always sit above the pause / end / join panels */
+#s-settings, #s-controls { z-index: 8; }
 #s-menu::before { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 118px, rgba(0, 0, 0, 0.55) 118px 122px); opacity: 0.5; pointer-events: none; animation: breathe 7s ease-in-out infinite; }
 @keyframes breathe { 50% { opacity: 0.2; } }
 .title-wrap { text-align: center; position: relative; }
@@ -118,6 +121,24 @@ table.summary td:last-child { text-align: right; letter-spacing: 0.14em; text-tr
 #notebook h2 { margin: 0 0 4px; font-weight: 600; letter-spacing: 0.08em; } #notebook h3 { margin: 12px 0 2px; font: 600 11px var(--sans); letter-spacing: 0.2em; text-transform: uppercase; color: #6b5a41; }
 #notebook ol { margin: 0; padding-left: 22px; } #notebook li.done { text-decoration: line-through; color: #8b7d63; } #notebook li.cur { font-weight: 600; }
 #notebook .dim { color: #7a6c52; } #notes p { margin: 6px 0; font-style: italic; font-size: 15.5px; }
+#fps { position: absolute; left: 20px; top: 44px; font: 11px ui-monospace, Menlo, Consolas, monospace; color: rgba(160, 220, 170, 0.85); }
 #hint { position: absolute; right: 18px; bottom: 16px; font-size: 10px; letter-spacing: 0.16em; color: rgba(139, 135, 120, 0.7); text-transform: uppercase; }
 #fatal { position: fixed; inset: 0; z-index: 99; background: #050505; color: #ff7a6e; display: flex; align-items: center; justify-content: center; padding: 30px; text-align: center; white-space: pre-wrap; font: 14px ui-monospace, monospace; }
 @media (prefers-reduced-motion: reduce) { .title, #s-menu::before, #fx-static { animation: none; } }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--ink); line-height: 1.35; cursor: pointer; } .check input { margin-top: 2px; accent-color: var(--blood-hi); }
+
+/* ---------- difficulty, character creator ---------- */
+#difficulties .mode { cursor: pointer; } #difficulties .mode.locked { cursor: default; }
+#difficulties .mode.sel { border-color: rgba(212, 42, 34, 0.75); background: rgba(163, 18, 15, 0.16); }
+#difficulties .mode:not(.sel) { opacity: 0.6; }
+#s-character { z-index: 8; }
+.char-body { display: flex; gap: 20px; align-items: stretch; flex-wrap: wrap; justify-content: center; }
+#char-canvas { width: 240px; height: 336px; background: radial-gradient(ellipse at 50% 80%, #2a211c 0%, #0b0909 70%); border: 1px solid var(--line); }
+#char-options { flex: 1; min-width: 260px; display: flex; flex-direction: column; gap: 7px; }
+.opt { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+.opt .sw { display: flex; gap: 5px; flex-wrap: wrap; }
+.opt .sw button { width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.15); }
+.opt .sw button.sel { border-color: #fff; box-shadow: 0 0 0 2px var(--blood-hi); }
+.opt .pick { display: flex; gap: 5px; flex-wrap: wrap; }
+.opt .pick button { padding: 5px 9px; font-size: 11px; letter-spacing: 0.06em; text-transform: none; }
+.opt .pick button.sel { background: rgba(163, 18, 15, 0.4); border-color: rgba(212, 42, 34, 0.7); color: #fff; }

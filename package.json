@@ -12,7 +12,8 @@
     "dev": "node --watch server/index.js",
     "vendor": "node scripts/vendor.js",
     "test": "node test/smoke.js && node test/ai.js && node test/physics.js",
-    "test:browser": "node test/browser-e2e.js"
+    "test:browser": "node test/browser-e2e.js",
+    "map": "node scripts/map.js"
   },
   "dependencies": {
     "express": "^4.21.2",

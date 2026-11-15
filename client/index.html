@@ -15,6 +15,7 @@
 <body>
 <canvas id="view"></canvas>
 <div id="fx-vignette"></div>
+<div id="fx-hurt"></div>
 <div id="fx-static"></div>
 <div id="fx-flash"></div>
 <div id="fx-locker"></div>
@@ -24,6 +25,7 @@
   <div id="crosshair"></div>
   <div id="prompt"></div>
   <div id="roomname"></div>
+  <div id="fps" hidden></div>
   <div id="status"></div>
   <div id="revivebar"><i></i></div>
   <div id="toasts"></div>
@@ -59,9 +61,11 @@
       <button id="btn-create" class="primary">Create Private Lobby</button>
       <button id="btn-join">Join Lobby</button>
       <button id="btn-solo">Play (solo practice)</button>
+      <button id="btn-character">Character</button>
       <button id="btn-settings">Settings</button>
       <button id="btn-controls">Controls</button>
       <div id="conn" class="conn">Connecting to server…</div>
+      <div id="gpu-warn" class="error small" hidden></div>
     </div>
     <div class="foot">2–8 players · headphones strongly recommended</div>
   </section>
@@ -90,6 +94,8 @@
             <label class="mode on"><input type="radio" name="mode" value="coop" checked> <b>Escape (co-op)</b><span>Everyone against the Headmaster.</span></label>
             <label class="mode off"><input type="radio" name="mode" value="hunt" disabled> <b>Hunt Mode</b><span>One player is the Headmaster. Not built yet.</span></label>
           </div>
+          <h3>Difficulty <span id="diff-note" class="dim"></span></h3>
+          <div id="difficulties" class="modes"></div>
         </div>
         <div class="lobby-chat">
           <h3>Lobby chat</h3>
@@ -102,8 +108,21 @@
       <div class="row">
         <button id="btn-ready">Ready</button>
         <button id="btn-start" class="primary" hidden>Start Match</button>
+        <button id="btn-lobby-character">Edit Character</button>
         <button id="btn-leave">Leave</button>
       </div>
+    </div>
+  </section>
+
+  <section id="s-character" class="screen overlay" hidden>
+    <div class="panel wide">
+      <h2>Character</h2>
+      <div class="char-body">
+        <canvas id="char-canvas" width="300" height="420"></canvas>
+        <div id="char-options"></div>
+      </div>
+      <p class="dim small">This is how the other players see you, and what you see when you look down at yourself.</p>
+      <div class="row"><button id="btn-char-random">Randomise</button><button data-close class="primary">Done</button></div>
     </div>
   </section>
 
@@ -117,7 +136,9 @@
       <label class="field">Graphics
         <select id="set-quality"><option value="low">Low (no shadows, fewer lights)</option><option value="medium">Medium</option><option value="high">High</option></select>
       </label>
-      <p class="dim small">Graphics quality applies from the next match. Everything else applies immediately.</p>
+      <label class="check"><input id="set-dynres" type="checkbox"> Keep it smooth: lower the render resolution automatically when the frame rate drops</label>
+      <label class="check"><input id="set-showfps" type="checkbox"> Show frame rate</label>
+      <p class="dim small">Graphics quality applies from the next match (anti-aliasing after reloading the page). Everything else applies immediately. If the game still stutters on High, use Medium: it looks close and costs far less.</p>
       <div class="row"><button id="btn-fullscreen">Toggle Fullscreen</button><button data-close class="primary">Done</button></div>
     </div>
   </section>

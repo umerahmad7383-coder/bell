@@ -7,6 +7,7 @@ import { Server } from 'socket.io';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Game, TICK_HZ } from './game.js';
+import { DIFFICULTY, cleanLook } from '../client/shared/defs.js';
 
 const PORT = Number(process.env.PORT) || 3000;
 // Comma-separated list of allowed browser origins when the client is hosted
@@ -41,8 +42,8 @@ const cleanName = (n) => String(n ?? '').replace(/[\u0000-\u001f<>]/g, '').trim(
 
 function lobbyView(l) {
   return {
-    code: l.code, hostId: l.hostPid, mode: l.mode, state: l.state, max: MAX_PLAYERS, min: MIN_PLAYERS,
-    players: [...l.members.values()].map((m) => ({ id: m.pid, name: m.name, ready: m.ready, inGame: !!(l.game && l.game.players.has(m.pid)) })),
+    code: l.code, hostId: l.hostPid, mode: l.mode, difficulty: l.difficulty, state: l.state, max: MAX_PLAYERS, min: MIN_PLAYERS,
+    players: [...l.members.values()].map((m) => ({ id: m.pid, name: m.name, look: m.look, ready: m.ready, inGame: !!(l.game && l.game.players.has(m.pid)) })),
     last: l.last || null,
   };
 }
@@ -55,9 +56,9 @@ function uniqueName(l, name) {
   return name;
 }
 
-function joinLobby(socket, l, name) {
+function joinLobby(socket, l, name, look) {
   const pid = l.nextPid++;
-  l.members.set(socket.id, { pid, name: uniqueName(l, cleanName(name)), ready: false, sid: socket.id });
+  l.members.set(socket.id, { pid, name: uniqueName(l, cleanName(name)), look: cleanLook(look, pid - 1), ready: false, sid: socket.id });
   socket.join(l.code);
   socket.data.code = l.code; socket.data.pid = pid;
   if (!l.hostPid) l.hostPid = pid;
@@ -89,8 +90,8 @@ function startGame(l) {
   const sidOf = new Map(members.map((m) => [m.pid, m.sid]));
   l.state = 'playing';
   l.game = new Game({
-    mode: l.mode,
-    players: members.map((m) => ({ pid: m.pid, name: m.name })),
+    mode: l.mode, difficulty: l.difficulty,
+    players: members.map((m) => ({ pid: m.pid, name: m.name, look: m.look })),
     send: (ev, data) => io.to(l.code).emit(ev, data),
     sendTo: (pid, ev, data) => { const sid = sidOf.get(pid); if (sid) io.to(sid).emit(ev, data); },
     onEnd: (summary) => {
@@ -119,9 +120,9 @@ io.on('connection', (socket) => {
 
   socket.on('lobby:create', (d, cb) => {
     leaveLobby(socket);
-    const l = { code: makeCode(), members: new Map(), hostPid: 0, nextPid: 1, mode: 'coop', state: 'lobby', game: null, timer: null };
+    const l = { code: makeCode(), members: new Map(), hostPid: 0, nextPid: 1, mode: 'coop', difficulty: 'intermediate', state: 'lobby', game: null, timer: null };
     lobbies.set(l.code, l);
-    const pid = joinLobby(socket, l, d?.name);
+    const pid = joinLobby(socket, l, d?.name, d?.look);
     ack(cb, { ok: true, code: l.code, you: pid });
   });
 
@@ -131,7 +132,7 @@ io.on('connection', (socket) => {
     if (!l) return ack(cb, { ok: false, error: 'No lobby with that code. Check the six characters and try again.' });
     if (l.members.size >= MAX_PLAYERS) return ack(cb, { ok: false, error: 'That lobby is full (8 players).' });
     leaveLobby(socket);
-    const pid = joinLobby(socket, l, d?.name);
+    const pid = joinLobby(socket, l, d?.name, d?.look);
     ack(cb, { ok: true, code: l.code, you: pid, inProgress: l.state === 'playing' });
   });
 
@@ -141,6 +142,12 @@ io.on('connection', (socket) => {
     const l = lobbyOf(), m = member();
     if (l && m && m.pid === l.hostPid && l.state !== 'playing' && v === 'coop') { l.mode = v; pushLobby(l); }
   });
+  socket.on('lobby:difficulty', (v) => {
+    const l = lobbyOf(), m = member();
+    if (l && m && m.pid === l.hostPid && l.state !== 'playing' && DIFFICULTY[v]) { l.difficulty = v; pushLobby(l); }
+  });
+  // character creator: a player can change their look while waiting in the lobby
+  socket.on('lobby:look', (look) => { const l = lobbyOf(), m = member(); if (l && m) { m.look = cleanLook(look, m.pid - 1); if (l.state !== 'playing') pushLobby(l); } });
   socket.on('lobby:start', (_d, cb) => {
     const l = lobbyOf(), m = member();
     if (!l || !m) return ack(cb, { ok: false, error: 'Not in a lobby.' });

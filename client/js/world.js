@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from '../vendor/BufferGeometryUtils.js';
 import { MAP, W, H, WALL, ROOMS, CEIL_Y, BASEMENT_Y, BASEMENT_CEIL, STAIRS, ceilY } from '../shared/map.js';
 import { writingTexture } from './textures.js';
+import { buildItemMesh } from './items.js';
 
 // deterministic decoration so every client sees the same clutter
 function mulberry(seed) { return () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
@@ -42,6 +43,16 @@ class Quads {
     this.uv.push(x0 * s, z0 * s, x1 * s, z0 * s, x1 * s, z1 * s, x0 * s, z1 * s);
     if (up) this.i.push(b, b + 2, b + 1, b, b + 3, b + 2); else this.i.push(b, b + 1, b + 2, b, b + 2, b + 3);
   }
+  // vertical 1 m wide quad centred on (cx, cz), facing (nx, nz)
+  wall(cx, cz, nx, nz, y0, y1) {
+    const b = this.p.length / 3, ex = nz * 0.5, ez = -nx * 0.5;
+    const x0 = cx - ex, z0 = cz - ez, x1 = cx + ex, z1 = cz + ez;
+    this.p.push(x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0);
+    this.n.push(nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz);
+    const u0 = nz !== 0 ? x0 : z0, u1 = nz !== 0 ? x1 : z1;
+    this.uv.push(u0, 0, u1, 0, u1, 1, u0, 1);
+    this.i.push(b, b + 1, b + 2, b, b + 2, b + 3);
+  }
   build() {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
@@ -54,17 +65,22 @@ class Quads {
 
 export function buildWorld(scene, T, Q) {
   const world = { doors: [], items: new Map(), power: false };
-  const std = (o) => new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0, ...o });
+  // PERFORMANCE: every light is evaluated for every pixel, so the shading model matters a lot.
+  // Lambert (diffuse only) is several times cheaper than the physically based Standard material
+  // and looks the same on matte plaster, concrete and wood. Only High keeps glossy floors.
+  const pbr = (o) => new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0, ...o });
+  const std = (o) => { const { roughness, metalness, ...rest } = o; return new THREE.MeshLambertMaterial(rest); };
+  const gloss = Q.gloss ? pbr : std;
   const M = {
     wall: std({ map: T.wall }),
     concrete: std({ map: T.concrete }),
-    lino: std({ map: T.lino, roughness: 0.55 }),
-    wood: std({ map: T.wood, roughness: 0.6 }),
+    lino: gloss({ map: T.lino, roughness: 0.55 }),
+    wood: gloss({ map: T.wood, roughness: 0.6 }),
     ceiling: std({ map: T.ceiling }),
-    prop: std({ map: T.grime, vertexColors: true, roughness: 0.8 }),
-    door: std({ map: T.door, roughness: 0.7 }),
-    locker: std({ map: T.locker, roughness: 0.55, metalness: 0.45 }),
-    iron: std({ color: 0x1b1c1e, roughness: 0.5, metalness: 0.7 }),
+    prop: std({ map: T.grime, vertexColors: true }),
+    door: std({ map: T.door }),
+    locker: std({ map: T.locker }),
+    iron: std({ color: 0x1b1c1e }),
     trim: std({ color: 0x5d5a4c, map: T.grime }),
   };
   const add = (mesh, cast = true, recv = true) => { mesh.castShadow = cast && Q.shadows; mesh.receiveShadow = recv && Q.shadows; scene.add(mesh); return mesh; };
@@ -82,23 +98,22 @@ export function buildWorld(scene, T, Q) {
   };
 
   // ------------------------------------------------------------ walls
+  // PERFORMANCE: only the wall faces that actually border a walkable cell are built, merged into two
+  // meshes. (Drawing every wall cell as a full box meant ~10x the triangles, most of them buried.)
   {
-    const upper = [], lower = [];
+    const upper = new Quads(), lower = new Quads();
     for (let z = 0; z < H; z++) for (let x = 0; x < W; x++) {
       if (MAP.grid[z * W + x] !== WALL) continue;
-      let up = false, low = false;
-      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         if (!walkable(x + dx, z + dz)) continue;
         const lv = MAP.level[(z + dz) * W + x + dx];
-        if (lv < 2) up = true;
-        if (lv >= 1) low = true;
+        const cx = x + 0.5 + dx * 0.5, cz = z + 0.5 + dz * 0.5;
+        if (lv < 2) upper.wall(cx, cz, dx, dz, 0, CEIL_Y);
+        if (lv >= 1) lower.wall(cx, cz, dx, dz, BASEMENT_Y, 0);
       }
-      if (up) upper.push({ x: x + 0.5, y: CEIL_Y / 2, z: z + 0.5 });
-      if (low) lower.push({ x: x + 0.5, y: BASEMENT_Y / 2, z: z + 0.5 });
     }
-    const tint = () => { const v = R(0.88, 1); return new THREE.Color(v, v * R(0.97, 1), v * R(0.94, 1)); };
-    instanced(new THREE.BoxGeometry(1, CEIL_Y, 1), M.wall, upper, tint);
-    instanced(new THREE.BoxGeometry(1, -BASEMENT_Y, 1), M.concrete, lower, tint);
+    add(new THREE.Mesh(upper.build(), M.wall));
+    add(new THREE.Mesh(lower.build(), M.concrete));
   }
 
   // ------------------------------------------------------------ floors & ceilings
@@ -272,7 +287,7 @@ export function buildWorld(scene, T, Q) {
         const parts = [bx(p.w, 0.12, 0.5, 0, 0.82, 0.22, '#b5b8b0'), bx(p.w - 0.2, 0.7, 0.08, 0, 0.4, 0.42, '#4d4f4c')];
         for (let i = 0; i < p.w; i++) parts.push(bx(0.5, 0.02, 0.3, -p.w / 2 + i + 0.5, 0.885, 0.2, '#2a2c2b'), cy(0.012, 0.012, 0.16, -p.w / 2 + i + 0.5, 0.96, 0.4, '#8a8d8f', 6));
         single(parts, p);
-        const mirror = new THREE.Mesh(new THREE.PlaneGeometry(p.w - 0.2, 0.9), std({ color: 0x1a2226, metalness: 0.95, roughness: 0.18 }));
+        const mirror = new THREE.Mesh(new THREE.PlaneGeometry(p.w - 0.2, 0.9), gloss({ color: 0x1a2226, metalness: 0.95, roughness: 0.18 }));
         mirror.position.set(p.x, 1.6, p.z + 0.485); mirror.rotation.y = Math.PI; scene.add(mirror);
         writing("DON'T LOOK BEHIND YOU", p.x, 1.6, p.z + 0.47, Math.PI, 2.6, 0.5, '#3a0606');
         break;
@@ -299,8 +314,7 @@ export function buildWorld(scene, T, Q) {
         single([cy(0.85, 0.85, 1.9, 0, 0.95, 0, '#43382f', 14), cy(0.5, 0.85, 0.35, 0, 2.05, 0, '#43382f', 14), cy(0.12, 0.12, 0.9, 0.3, 2.3, 0.2, '#5a3a22'), cy(0.09, 0.09, 1.4, -0.5, 2.0, -0.5, '#4f4f52'), bx(0.9, 0.2, 0.9, 0, 0.1, 0, '#232326')], p);
         const grate = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.3), new THREE.MeshBasicMaterial({ color: 0xff5a14 }));
         grate.position.set(p.x + 0.86, p.y + 0.6, p.z); grate.rotation.y = Math.PI / 2; scene.add(grate);
-        const l = new THREE.PointLight(0xff5a1e, 4, 8, 2); l.position.set(p.x + 1.3, p.y + 0.7, p.z); scene.add(l);
-        world.boiler = { light: l, grate };
+        world.boiler = { x: p.x + 1.3, y: p.y + 0.95, z: p.z, grate };
         break;
       }
       case 'pipes': {
@@ -342,7 +356,7 @@ export function buildWorld(scene, T, Q) {
     const sill = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.05, 0.12), M.trim); sill.position.set(w.x + 0.5 + w.nx * 0.55, 1.03, w.z + 0.5 + w.nz * 0.55); sill.rotation.y = m.rotation.y; scene.add(sill);
   }
   function writing(text, x, y, z, ry, w = 3.4, h = 0.85, color) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: writingTexture(text, color), transparent: true, roughness: 1, depthWrite: false }));
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshLambertMaterial({ map: writingTexture(text, color), transparent: true, depthWrite: false }));
     m.position.set(x, y, z); m.rotation.y = ry; scene.add(m);
   }
   writing('HE STILL TAKES ATTENDANCE', 27, 1.7, 21.012, 0, 3.8);
@@ -353,7 +367,7 @@ export function buildWorld(scene, T, Q) {
   writing('HE IS ALREADY DOWN HERE', 54, BASEMENT_Y + 1.5, 38.012, 0, 3.6, 0.8, '#5a0a0a');
   writing('QUIET', 40.5, 1.9, 19.988, Math.PI, 1.8);
   {
-    const mat = new THREE.MeshStandardMaterial({ map: T.blood, transparent: true, roughness: 0.35, depthWrite: false });
+    const mat = new THREE.MeshLambertMaterial({ map: T.blood, transparent: true, depthWrite: false });
     const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     const list = [];
     for (let i = 0; i < 26; i++) { const s = MAP.spots[(rng() * MAP.spots.length) | 0]; if (!s.top) list.push({ x: s.x + R(-0.3, 0.3), y: s.y - 0.105, z: s.z + R(-0.3, 0.3), ry: R(0, 6.28), sx: R(0.8, 2.2), sz: R(0.8, 2.2) }); }
@@ -367,15 +381,22 @@ export function buildWorld(scene, T, Q) {
   const OFF = new THREE.Color(0.035, 0.037, 0.035), ON = new THREE.Color(0.8, 0.95, 0.82), RED = new THREE.Color(0.55, 0.03, 0.02), tmpC = new THREE.Color();
   fixtures.forEach((f, i) => { dummy.position.set(f.x, f.y, f.z); dummy.rotation.set(0, f.alongX ? 0 : Math.PI / 2, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix(); fixMesh.setMatrixAt(i, dummy.matrix); fixMesh.setColorAt(i, OFF); });
   scene.add(fixMesh);
+  const fixCount = fixtures.length, FIRE = new THREE.Color(1, 0.35, 0.12);
+  if (world.boiler) fixtures.push({ ...world.boiler, boiler: true, lit: true, phase: 0, cur: 0 });
+  // PERFORMANCE: a light costs GPU time on every pixel even at zero brightness. While the power is
+  // off only a couple of emergency lamps can be near you, so the rest of the pool is switched off
+  // entirely (not just dimmed) until the power comes back.
   const pool = [];
-  for (let i = 0; i < Q.lights; i++) { const l = new THREE.PointLight(0xffffff, 0, 11, 2); scene.add(l); pool.push(l); }
+  for (let i = 0; i < Q.lights; i++) { const l = new THREE.PointLight(0xffffff, 0, 11, 2); l.visible = i < Q.darkLights; scene.add(l); pool.push(l); }
+  let activeLights = Q.darkLights;
   let flickerT = 0, assignT = 0, nearest = [];
-  world.setPower = (on) => { world.power = on; for (const u of unlit) u.mat.color.set(on ? u.on : 0x000000); if (world.cam) world.cam.mat.color.set(on ? 0xffffff : 0x000000); refreshFixtures(); };
+  world.setPower = (on) => { world.power = on; activeLights = on ? Q.lights : Q.darkLights; pool.forEach((l, i) => { l.visible = i < activeLights; }); for (const u of unlit) u.mat.color.set(on ? u.on : 0x000000); if (world.cam) world.cam.mat.color.set(on ? 0xffffff : 0x000000); refreshFixtures(); };
   world.flicker = (secs) => { flickerT = Math.max(flickerT, secs); };
   function refreshFixtures() {
     fixtures.forEach((f, i) => {
+      if (f.boiler) return;
       f.lit = f.emergency ? true : world.power && !f.dead;
-      fixMesh.setColorAt(i, f.lit ? (f.emergency && !world.power ? RED : f.emergency ? ON : ON) : OFF);
+      fixMesh.setColorAt(i, f.lit ? (f.emergency && !world.power ? RED : ON) : OFF);
     });
     fixMesh.instanceColor.needsUpdate = true;
   }
@@ -383,24 +404,11 @@ export function buildWorld(scene, T, Q) {
 
   // ------------------------------------------------------------ items
   const glowMat = (color) => new THREE.SpriteMaterial({ map: T.glow, color, transparent: true, opacity: 0.25, depthWrite: false, blending: THREE.AdditiveBlending });
-  const em = (color, emissive, o = {}) => std({ color, emissive, emissiveIntensity: 0.5, roughness: 0.5, ...o });
-  const itemBuilders = {
-    fuse: () => [[new THREE.CylinderGeometry(0.035, 0.035, 0.12, 8).rotateZ(Math.PI / 2), em(0xd9a441, 0x8a4a00, { transparent: true, opacity: 0.85 })], [new THREE.CylinderGeometry(0.038, 0.038, 0.03, 8).rotateZ(Math.PI / 2).translate(0.07, 0, 0), em(0x9a9a9a, 0x222222)], [new THREE.CylinderGeometry(0.038, 0.038, 0.03, 8).rotateZ(Math.PI / 2).translate(-0.07, 0, 0), em(0x9a9a9a, 0x222222)], 0xffa030],
-    key_principal: () => [[new THREE.TorusGeometry(0.035, 0.01, 6, 12).rotateX(Math.PI / 2), em(0xc9a23a, 0x5a4200)], [new THREE.BoxGeometry(0.1, 0.012, 0.015).translate(0.085, 0, 0), em(0xc9a23a, 0x5a4200)], [new THREE.BoxGeometry(0.015, 0.012, 0.03).translate(0.12, 0, 0.02), em(0xc9a23a, 0x5a4200)], 0xffd060],
-    key_gate: () => [[new THREE.TorusGeometry(0.05, 0.014, 6, 12).rotateX(Math.PI / 2), em(0x8fa3b5, 0x1d3550)], [new THREE.BoxGeometry(0.16, 0.016, 0.02).translate(0.13, 0, 0), em(0x8fa3b5, 0x1d3550)], [new THREE.BoxGeometry(0.02, 0.016, 0.05).translate(0.19, 0, 0.03), em(0x8fa3b5, 0x1d3550)], 0x60b0ff],
-    battery: () => [[new THREE.CylinderGeometry(0.03, 0.03, 0.11, 8).rotateZ(Math.PI / 2), em(0x2f8d3a, 0x0c3a10)], [new THREE.CylinderGeometry(0.012, 0.012, 0.02, 6).rotateZ(Math.PI / 2).translate(0.065, 0, 0), em(0xbba040, 0x332200)], 0x60ff80],
-    medkit: () => [[new THREE.BoxGeometry(0.26, 0.14, 0.2).translate(0, 0.05, 0), em(0xd8d8d0, 0x333333)], [new THREE.BoxGeometry(0.12, 0.004, 0.04).translate(0, 0.123, 0), em(0xb01010, 0x700000)], [new THREE.BoxGeometry(0.04, 0.004, 0.12).translate(0, 0.123, 0), em(0xb01010, 0x700000)], 0xff7070],
-    lockpick: () => [[new THREE.BoxGeometry(0.16, 0.006, 0.012).rotateY(0.3), em(0xb8bcc0, 0x333333, { metalness: 0.8 })], [new THREE.BoxGeometry(0.16, 0.006, 0.012).rotateY(-0.4), em(0xb8bcc0, 0x333333, { metalness: 0.8 })], 0xd0d0ff],
-    bottle: () => [[new THREE.CylinderGeometry(0.038, 0.038, 0.18, 8).translate(0, 0.04, 0), em(0x2f5a3a, 0x0a2010, { transparent: true, opacity: 0.8, roughness: 0.15 })], [new THREE.CylinderGeometry(0.014, 0.03, 0.09, 8).translate(0, 0.175, 0), em(0x2f5a3a, 0x0a2010, { transparent: true, opacity: 0.8, roughness: 0.15 })], 0x70c090],
-    bell: () => [[new THREE.CylinderGeometry(0.025, 0.07, 0.1, 10).translate(0, 0.0, 0), em(0xb8902a, 0x4a3500, { metalness: 0.7, roughness: 0.3 })], [new THREE.CylinderGeometry(0.014, 0.014, 0.1, 6).translate(0, 0.1, 0), em(0x3a2a1a, 0x000000)], 0xffc040],
-    note: () => [[new THREE.BoxGeometry(0.2, 0.004, 0.27), em(0xcfc8b0, 0x55523f)], 0xfff0c0],
-  };
   world.addItem = (it) => {
     if (world.items.has(it.id)) return;
     const g = new THREE.Group();
-    const def = itemBuilders[it.type]();
-    const glowColor = def.pop();
-    for (const [geo, mat] of def) g.add(new THREE.Mesh(geo, mat));
+    const { group: g0, glowColor } = buildItemMesh(it.type);
+    g.add(g0);
     const glow = new THREE.Sprite(glowMat(glowColor)); glow.scale.setScalar(0.55); glow.position.y = 0.05; g.add(glow);
     g.position.set(it.x, it.y, it.z); g.rotation.y = (it.id * 2.399) % 6.28;
     scene.add(g);
@@ -447,14 +455,23 @@ export function buildWorld(scene, T, Q) {
     if (assignT <= 0) {
       assignT = 0.3;
       const camBase = cam.y < -1.2;
-      nearest = fixtures.map((f, i) => ({ f, i, d: f.lit && (f.y < -0.2) === camBase ? (f.x - cam.x) ** 2 + (f.z - cam.z) ** 2 : 1e9 })).filter((o) => o.d < 600).sort((a, b) => a.d - b.d).slice(0, pool.length);
+      nearest.length = 0;
+      for (let i = 0; i < fixtures.length; i++) {
+        const f = fixtures[i];
+        if (!f.lit || (f.y < -0.2) !== camBase) continue;
+        const d = (f.x - cam.x) ** 2 + (f.z - cam.z) ** 2;
+        if (d < 500) nearest.push({ f, i, d });
+      }
+      nearest.sort((a, b) => a.d - b.d);
+      nearest.length = Math.min(nearest.length, activeLights);
     }
     if (flickerT > 0) flickerT -= dt;
     let dirty = false;
     pool.forEach((l, k) => {
       const o = nearest[k];
-      if (!o) { l.intensity = 0; return; }
+      if (!o || !l.visible) { l.intensity = 0; return; }
       const f = o.f;
+      if (f.boiler) { l.position.set(f.x, f.y, f.z); l.color.copy(FIRE); l.intensity = 3.5 + Math.sin(t * 9) * 0.6 + Math.sin(t * 23) * 0.4; return; }
       let v = 1;
       if (f.emergency && !world.power) v = 0.75 + 0.25 * Math.sin(t * 2 + f.phase);
       else if (f.faulty) { const n = Math.sin(t * 13 + f.phase) * Math.sin(t * 7.3 + f.phase * 2) * Math.sin(t * 1.7 + f.phase); v = n > 0.25 ? 0.05 : n > 0.1 ? 0.5 : 1; }
@@ -463,15 +480,16 @@ export function buildWorld(scene, T, Q) {
       l.position.set(f.x, f.y - 0.25, f.z);
       l.color.copy(red ? RED : ON);
       l.intensity = (red ? 7 : 9) * v;
-      if (Math.abs(v - f.cur) > 0.02) { f.cur = v; tmpC.copy(red ? RED : ON).multiplyScalar(0.15 + 0.85 * v); fixMesh.setColorAt(o.i, tmpC); dirty = true; }
+      if (o.i < fixCount && Math.abs(v - f.cur) > 0.02) { f.cur = v; tmpC.copy(red ? RED : ON).multiplyScalar(0.15 + 0.85 * v); fixMesh.setColorAt(o.i, tmpC); dirty = true; }
     });
     if (dirty) fixMesh.instanceColor.needsUpdate = true;
-    if (world.boiler) world.boiler.light.intensity = 3.5 + Math.sin(t * 9) * 0.6 + Math.sin(t * 23) * 0.4;
     // items pulse softly so they can be found in the dark
     for (const it of world.items.values()) it.glow.material.opacity = 0.16 + 0.12 * Math.sin(t * 2.5 + it.id);
     // rain
-    for (let i = 0; i < RN; i++) { rainPos[i * 3 + 1] -= dt * 14; if (rainPos[i * 3 + 1] < 0) rainPos[i * 3 + 1] = 8; }
-    rainGeo.attributes.position.needsUpdate = true;
+    if (cam.x < 16 && cam.y > -1) { // only simulated when the courtyard can actually be seen
+      for (let i = 0; i < RN; i++) { rainPos[i * 3 + 1] -= dt * 14; if (rainPos[i * 3 + 1] < 0) rainPos[i * 3 + 1] = 8; }
+      rainGeo.attributes.position.needsUpdate = true;
+    }
   };
 
   return world;

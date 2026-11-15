@@ -13,7 +13,7 @@ An online co-op horror game for 2–8 players. You and your friends are locked i
 | Runs and was tested locally | Yes: 3 automated suites plus a two-browser end-to-end run (see [Testing](#testing)) |
 | Deployed to a public URL | **No.** It was built in a sandbox with no hosting account. Follow [Deploy](#deploy-get-a-public-link) to put it online (about 5 minutes). |
 | Tested between two physically separate PCs over the internet | **No.** Tested with separate browser processes and separate Socket.IO clients against one local server. The networking does not depend on being local, but nobody has yet played it across two networks. [Do that test](#test-between-two-separate-pcs) after deploying. |
-| Frame rate on a real GPU | **Not measured.** The sandbox has no GPU. The scene is small (about 50–210 draw calls), so ordinary gaming PCs should be fine; use Settings → Graphics → Low if not. |
+| Frame rate on a real GPU | **Not measured.** The sandbox has no GPU, only a software renderer. In that renderer the optimised build takes about half the time per frame that the first version did on High, but real numbers depend on your graphics card. See [Performance](#performance). |
 | Hunt Mode (player-controlled Headmaster) | **Not built.** The lobby shows it as unavailable. |
 
 ## Run it on your own PC
@@ -72,6 +72,10 @@ cloudflared tunnel --url http://localhost:3000
 
 [cloudflared](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/) prints a random `https://….trycloudflare.com` address. Send that to your friends. It works until you close the terminal, and the address changes each time.
 
+## Updating a game you already deployed
+
+Replace the files in your GitHub repository with the new ones (on the repository page: **Add file → Upload files**, drag in the contents of the new folder, commit). Render rebuilds and redeploys by itself within a couple of minutes. Players should then reload the page with `Ctrl`+`F5` so the browser does not keep old files.
+
 ## Environment variables
 
 | Variable | Default | Meaning |
@@ -80,8 +84,8 @@ cloudflared tunnel --url http://localhost:3000
 | `CLIENT_ORIGIN` | `*` | Websites allowed to connect. Set to your frontend URL(s), comma-separated, when using Option B. |
 | `MAX_PLAYERS` | `8` | Lobby size limit (max 8). |
 | `MIN_PLAYERS` | `1` | Players needed to start. `1` allows solo practice; set `2` to force co-op. |
-| `MONSTER_GRACE` | `12` | Seconds at match start before the Headmaster can notice anyone. |
-| `MONSTER_SPEED` | `1` | Multiplier on his movement (0.5–1.5). Lower it if your group finds him too fast. |
+| `MONSTER_GRACE` | *(from difficulty)* | Seconds at match start before the Headmaster can notice anyone. Overrides the difficulty's own value. |
+| `MONSTER_SPEED` | `1` | Extra multiplier on his movement (0.5–1.5), applied on top of the chosen difficulty. |
 
 See `.env.example`. The only client-side setting is `client/config.js`.
 
@@ -123,15 +127,29 @@ Same-network check without deploying: run `npm start` on one PC, find its local 
 
 > Browsers reserve `Ctrl`+`W` for "close tab" and pages cannot override it. Crouch with `C`, or use Settings → Toggle Fullscreen (Chrome and Edge let the game lock those keys in fullscreen). The game also asks for confirmation before a tab closes mid-match.
 
+**Difficulty** is chosen by the host in the lobby:
+
+| | Beginner | Intermediate | Hard | Nightmare |
+|---|---|---|---|---|
+| His chase speed at the start (you sprint at 5.3 m/s) | 3.9 | 4.6 | 4.9 | 5.3 |
+| Hits before you go down | 3 | 2 | 2 | 1 |
+| Time to revive a downed player | 110 s | 80 s | 60 s | 45 s |
+| Supplies | more | normal | fewer | scarce |
+| Predicts where you ran; patrols near your current objective | – | yes | yes | yes |
+| Cuts you off in long chases, looks under tables, guards downed players, returns to where he lost you, learns which lockers you use, targets the wounded | – | – | yes | yes |
+| Thrown bottles | always fooled | always fooled | fooled once, then often walks to the thrower | walks straight to the thrower |
+
 **The Headmaster** patrols unpredictably, hears footsteps (running carries far, crouching barely at all), doors, dropped and thrown objects, and investigates. He sees further when your torch is on or the lights are powered, and poorly if you crouch in the dark or under a table. He opens doors (which slows him), searches after losing you, sometimes checks lockers — and always checks the one he watched you climb into. He gets faster and more persistent with every objective you complete. One hit wounds you, a second puts you down; teammates have 80 seconds to revive you with `E` (4 seconds) or a med kit (instant).
 
 **Items:** fuses, office key, gate key, batteries (torch lasts ~6 minutes each), med kit, lockpick, glass bottles (throw to make noise somewhere else), hand bell (drives him off for a few seconds, one use), notes (clues to where things are; shared with the whole team).
+
+**Your character.** Menu → **Character** (or **Edit Character** in the lobby) sets skin, clothes, shoes, hair, headwear, extras and build, with a live preview. Other players see that character. In first person you see your own body when you look down, your left hand holding the torch, and your right hand holding whichever inventory slot is selected; other players see what you are holding too.
 
 There is no voice chat. Use Discord or similar alongside the built-in text chat.
 
 ## What is and is not in this version
 
-Built: private lobbies with six-character codes, invite links, ready states, host start, host migration, rematch in the same lobby, disconnect handling, spectating after death or escape; the full school on one connected map (main hall, four corridors, three classrooms, science lab, library with a hidden room behind a loose bookshelf, cafeteria, gym, bathroom, storage, security office with a live monitor map, staff room, locked principal's office, stairwell, basement, cellar, boiler room, courtyard and exit gate); 20 doors plus the bookshelf and the gate; 20 lockers; the six-state monster AI plus a "stalk" behaviour; randomised item placement; inventory with drop/share; hiding, wounding, downing, reviving; power and lighting states; randomised paranormal events; procedural 3D audio; text chat; settings.
+Built: four difficulty levels; a character creator; first-person body and hands; private lobbies with six-character codes, invite links, ready states, host start, host migration, rematch in the same lobby, disconnect handling, spectating after death or escape; the full school on one connected map (main hall, four corridors, three classrooms, science lab, library with a hidden room behind a loose bookshelf, cafeteria, gym, bathroom, storage, security office with a live monitor map, staff room, locked principal's office, stairwell, basement, cellar, boiler room, courtyard and exit gate); 20 doors plus the bookshelf and the gate; 20 lockers; the six-state monster AI plus a "stalk" behaviour; randomised item placement; inventory with drop/share; hiding, wounding, downing, reviving; power and lighting states; randomised paranormal events; procedural 3D audio; text chat; settings.
 
 Not built, or simplified:
 
@@ -142,7 +160,30 @@ Not built, or simplified:
 - **Basement is reached by stairs but the map is one navigation layer** (no rooms stacked on top of each other).
 - **Movement is client-side with server sanity checks** (speed and wall checks), which is normal for co-op but is not cheat-proof.
 - **Lobbies live in server memory.** A server restart ends all matches. One server process handles all lobbies; there is no multi-instance scaling.
-- **Balance is untested with real groups.** Tune with `MONSTER_SPEED` and `MONSTER_GRACE`.
+- **Balance is untested with real groups.** Pick a difficulty in the lobby; fine-tune with `MONSTER_SPEED` and `MONSTER_GRACE`.
+- **No in-game map**, on purpose. See [The map](#the-map-for-you-only).
+
+## Performance
+
+Settings → Graphics has Low, Medium and High, plus two switches:
+
+- **Keep it smooth** (on by default): the game measures its frame rate once a second and lowers the internal render resolution when it falls under about 50 fps, then raises it again when there is headroom. This is what stops High from stuttering on weaker graphics cards.
+- **Show frame rate**: prints the fps and the current resolution percentage in the top-left corner.
+
+What each level costs: Low has no shadows, 75% resolution, no anti-aliasing and 2 real ceiling lights. Medium adds torch shadows and 4 lights. High adds glossy floors, sharper shadows, 6 lights and up to 1.5× resolution on high-density screens.
+
+If the menu shows a red warning that the browser is rendering without the graphics card, no setting will help: enable hardware acceleration in the browser's settings and restart it.
+
+## The map (for you only)
+
+Players get no map in the game. To make one for yourself:
+
+```bash
+npm run map -- --secret     # writes docs/school-map.svg, including the hidden room
+npm run map                 # same, without the hidden room
+```
+
+Open the SVG in any browser. The generator lives in `scripts/`, and neither `scripts/` nor `docs/` is served by the game server, so players cannot download it from your site. If your GitHub repository is public, people could still read those files there; make the repository private, or do not upload `docs/` and `scripts/floorplan.js`.
 
 ## Testing
 
@@ -151,7 +192,7 @@ npm test                # all three suites below (needs dev dependencies)
 ```
 
 - `test/smoke.js` — starts the real server and drives three real Socket.IO clients through a whole match: lobby rules, movement sync, teleport rejection, door sync, two players grabbing the same item, dropping and sharing, locked doors, the stairs, all six objectives, escape, disconnect during a match, host migration, rematch with re-randomised items.
-- `test/ai.js` — runs the real game simulation headlessly and checks patrol, door opening, chase, attack, retreat, noise investigation, search, hiding rules, the bell, and aggression scaling.
+- `test/ai.js` — runs the real game simulation headlessly and checks patrol, door opening, chase, attack, retreat, noise investigation, search, hiding rules, the bell, aggression scaling, the four difficulty levels, and the smarter behaviours (prediction, bottle origin, looking under tables, guarding the downed).
 - `test/physics.js` — runs the real Rapier character controller against the real school colliders: walls, the gate, stairs down and up, crawling under tables, lockers.
 - `test/browser-e2e.js` — optional; two real Chrome windows with real key presses (needs Playwright; instructions are at the top of the file).
 
@@ -167,6 +208,10 @@ client/js/game.js    rendering loop, first-person controller, interpolation, HUD
 client/js/world.js   builds the school geometry, lights, props, items
 client/js/physics.js Rapier world and character controller
 client/js/entities.js  monster and player models and animation
+client/js/viewmodel.js first-person hands
+client/js/items.js   item meshes (world, hands)
+client/shared/defs.js  difficulty levels, item codes, character options
+scripts/floorplan.js   map generator (not served to players)
 client/js/audio.js   synthesised sound
 client/js/textures.js  procedurally painted textures
 client/vendor/       three.js, Rapier, Socket.IO client (copied from npm by `npm run vendor`)
