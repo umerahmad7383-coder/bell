@@ -45,9 +45,10 @@ export class Game {
         id: pl.pid, name: pl.name, look: cleanLook(pl.look, i), x: s.x, y: 0, z: s.z, ry: Math.PI / 2 * -1, rx: 0, flags: 0,
         hp: this.maxHp, state: 'alive', inv: new Array(INV_SLOTS).fill(null), hidden: -1, bleed: 0,
         lastT: 0, stepT: 0, reviving: null, vx: 0, vz: 0, sel: 0, pingT: -9, rootT: 0, voiceT: -9,
-        stats: { fuses: 0, revives: 0, hits: 0, thrown: 0 },
+        stats: { fuses: 0, revives: 0, hits: 0, thrown: 0, lures: 0, breath: 0 },
       });
     });
+    this.lures = MAP.lures.map((l) => ({ ...l, readyAt: 0, used: false }));
     this.spawnItems();
     this.monster = hunter ? new HumanMonster(this, hunter.pid, hunter.name) : new Monster(this);
     this.paraT = rand(14, 22);
@@ -80,19 +81,23 @@ export class Game {
     this.addItem('key_gate', gk.x, gk.y + 0.13, gk.z);
 
     // notes double as clues, so reading them out loud to the team matters
-    const noteRooms = shuffled.filter((r) => r !== keyRoom).slice(3, 6);
+    const noteRooms = shuffled.filter((r) => r !== keyRoom).slice(3, 8);
     const texts = [
       `Caretaker's log — "Locked the Principal's office after what happened. I'm not carrying that key around any more. Left it in the ${keyRoom.toUpperCase()}. If he wants it, let him look."`,
       `Maintenance memo — "Somebody keeps pulling the fuses. Found one in the ${fuseRooms[0].toUpperCase()} of all places. The box is in the boiler room, bottom of the east stairs. Three fuses or nothing works — not the lights, not the gate."`,
       `Torn page, a child's handwriting — "He hears you when you run. He does not see well if you stay low and keep the torch off. He checks the lockers when he is sure. He hates the bell. He ALWAYS comes when the lights come back."`,
+      `Nurse's log, last entry — "The Peters boy swears he held his breath in a locker and the Headmaster walked right past him. Hold SPACE in there. Don't move. Don't breathe. It does not always work."`,
+      `Music teacher's note — "He can't abide noise he didn't make. The piano brings him running, so does the old radio in the janitor's closet. And the great bell on the stage... ring that and the whole school hears it. Once. It cracked the last time."`,
     ];
     texts.forEach((text, i) => place('note', noteRooms[i] || pick(general), { text }));
 
     // supplies (deliberately scarce)
     const k = this.D.supplies;
-    for (let i = 0; i < Math.round(5 * k); i++) place('battery', pick(general));
-    for (let i = 0; i < Math.round(5 * k); i++) place('bottle', pick(general));
+    // (the school is bigger since v0.9, so there is a little more lying around)
+    for (let i = 0; i < Math.round(6 * k); i++) place('battery', pick(general));
+    for (let i = 0; i < Math.round(6 * k); i++) place('bottle', pick(general));
     for (let i = 0; i < Math.max(1, Math.round(1.4 * k)); i++) place('medkit', pick(general));
+    place('medkit', "Nurse's Office"); // the nurse always kept one
     place('lockpick', pick(general.filter((r) => r !== keyRoom)));
     place('bell', pick(general));
     // the hidden archive behind the library bookshelf always rewards whoever finds it
@@ -114,6 +119,7 @@ export class Game {
       items: [...this.items.values()].map(pubItem),
       doors: this.doors.map((d) => [d.open ? 1 : 0, d.locked ? 1 : 0]),
       obj: this.obj, notes: this.notes,
+      lures: this.lures.map((l) => [l.used ? 1 : 0, r2(Math.max(0, l.readyAt - this.time))]),
       monster: this.monster.snap(),
       tick: TICK_HZ,
     };
@@ -285,6 +291,20 @@ export class Game {
         this.noise(c.x - 1, c.z, 16);
         return;
       }
+      case 'lure': {
+        const L = this.lures[id];
+        if (!L || !this.playerNear(p, L.x, L.z, 2.7) || Math.abs(floorY(L.x, L.z) - p.y) > 1.5) return;
+        if (L.used) return this.msg(p, 'The great bell is cracked right through. It will never ring again.', 'warn');
+        if (this.time < L.readyAt) return this.msg(p, `Not yet: ${L.name} needs another ${Math.ceil(L.readyAt - this.time)} s.`, 'warn');
+        if (L.cd) L.readyAt = this.time + L.cd + L.delay + L.dur; else L.used = true;
+        p.stats.lures++;
+        this.emit({ e: 'lure', id: L.id, delay: L.delay, dur: L.dur, by: p.id, used: L.used ? 1 : 0, ready: r2(Math.max(0, L.readyAt - this.time)) });
+        // he hears it every second and a half for as long as it plays
+        for (let t = 0; t < L.dur; t += 1.5) this.later(L.delay + t, () => this.noise(L.x, L.z, L.r, null, { kind: 'lure' }));
+        if (L.kind === 'greatbell') this.announce(`${p.name} rang the great bell. The whole school heard it, and so did he.`, 'bad');
+        else if (L.kind === 'radio') this.msg(p, 'You turn the dial. It clicks... six seconds. Get away from it.', 'info');
+        return;
+      }
       case 'revive': {
         const t = this.players.get(id);
         if (!t || t.state !== 'downed' || !this.playerNear(p, t.x, t.z, 2.6)) return;
@@ -347,7 +367,7 @@ export class Game {
         const to = [r2(lx), r2(floorY(lx, lz)), r2(lz)];
         this.emit({ e: 'throw', from: [r2(p.x), r2(p.y + 1.4), r2(p.z)], to, by: p.id });
         const origin = { x: p.x, z: p.z };
-        this.pending.push({ t: this.time + 0.75, fn: () => { this.emit({ e: 'smash', p: to }); this.noise(lx, lz, 26, null, { kind: 'bottle', origin }); } });
+        this.later(0.75, () => { this.emit({ e: 'smash', p: to }); this.noise(lx, lz, 26, null, { kind: 'bottle', origin }); });
         break;
       }
       case 'bell': {
@@ -401,25 +421,59 @@ export class Game {
     this.emit({ e: 'ping', by: p.id, p: [r2(x), r2(y), r2(z)], item: it ? it.type : null });
   }
 
-  onDrop(pid, slot) {
+  /** m = slot number (plain drop), or { slot, toss: 0..1, ry } — a toss lands up to ~4.5 m ahead. */
+  onDrop(pid, m) {
     const p = this.players.get(pid);
     if (!p || this.over || p.hidden >= 0 || (p.state !== 'alive' && p.state !== 'downed')) return;
-    slot |= 0;
+    const slot = (typeof m === 'object' && m ? m.slot : m) | 0;
+    const toss = p.state === 'alive' && typeof m === 'object' && m ? Math.max(0, Math.min(1, Number(m.toss) || 0)) : 0;
     const it = p.inv[slot];
-    if (!it) return;
+    if (!it || slot < 0 || slot >= INV_SLOTS) return;
     p.inv[slot] = null;
-    this.dropItem(p, it);
+    if (toss > 0.05) {
+      const ry = Number.isFinite(Number(m.ry)) ? Number(m.ry) : p.ry;
+      const dx = -Math.sin(ry), dz = -Math.cos(ry), range = 1.4 + 3.2 * toss;
+      let best = 0;
+      for (let t = 0.3; t <= range; t += 0.1) {
+        const nx = p.x + dx * t, nz = p.z + dz * t, cx = Math.floor(nx), cz = Math.floor(nz);
+        if (!inBounds(cx, cz)) break;
+        const c = idx(cx, cz), di = MAP.doorAt[c];
+        if (MAP.grid[c] === WALL || (di >= 0 && !this.doors[di].open) || MAP.blocked[c] || Math.abs(floorY(nx, nz) - p.y) > 0.5) break;
+        best = t;
+      }
+      const tt = Math.max(0, best - 0.25); // it lands a little short of whatever it hit
+      const lx = p.x + dx * tt, lz = p.z + dz * tt;
+      const from = [r2(p.x), r2(p.y + 1.3), r2(p.z)];
+      it.x = r2(lx); it.z = r2(lz); it.y = r2(floorY(lx, lz) + 0.12);
+      this.items.set(it.id, it);
+      this.emit({ e: 'item+', item: pubItem(it), from, toss: 1 });
+      this.sendInv(p);
+      this.later(0.45, () => this.noise(lx, lz, 5, null));
+      return;
+    }
+    this.dropItem(p, it, true);
     this.sendInv(p);
     this.noise(p.x, p.z, 3.5, p.id);
   }
-  dropItem(p, it) {
+  dropItem(p, it, animate = false) {
     const fx = -Math.sin(p.ry) * 0.6, fz = -Math.cos(p.ry) * 0.6;
     let x = p.x + fx, z = p.z + fz;
-    if (!inBounds(Math.floor(x), Math.floor(z)) || MAP.grid[idx(Math.floor(x), Math.floor(z))] !== 1) { x = p.x; z = p.z; }
+    const c = inBounds(Math.floor(x), Math.floor(z)) ? idx(Math.floor(x), Math.floor(z)) : -1;
+    if (c < 0 || MAP.grid[c] !== 1 || MAP.blocked[c] || Math.abs(floorY(x, z) - p.y) > 0.5) { x = p.x; z = p.z; }
     it.x = r2(x + rand(-0.15, 0.15)); it.z = r2(z + rand(-0.15, 0.15)); it.y = r2(floorY(x, z) + 0.12);
     this.items.set(it.id, it);
-    this.emit({ e: 'item+', item: pubItem(it) });
+    this.emit({ e: 'item+', item: pubItem(it), ...(animate ? { from: [r2(p.x), r2(p.y + (p.state === 'downed' ? 0.5 : 1.15)), r2(p.z)] } : {}) });
   }
+  /** Hold your breath in a locker for too long and you gasp for air. Loud. */
+  onGasp(pid) {
+    const p = this.players.get(pid);
+    if (!p || this.over || p.state !== 'alive' || p.hidden < 0 || this.time - (p.gaspT ?? -9) < 2) return;
+    p.gaspT = this.time; p.flags &= ~16;
+    this.emit({ e: 'gasp', id: p.id, locker: p.hidden });
+    this.noise(p.x, p.z, 6.5, p.id, { kind: 'gasp' });
+  }
+  /** run fn after `secs` of game time */
+  later(secs, fn) { this.pending.push({ t: this.time + secs, fn }); }
 
   // ---------- doors ----------
   setDoor(d, open, by) {
@@ -442,6 +496,8 @@ export class Game {
     }
     this.emit({ e: 'hit', id: p.id });
     this.emit({ e: 'pstate', id: p.id, state: p.state, hp: p.hp, bleed: p.bleed });
+    // Hunt Mode: a survivor who survives a hit gets a short burst of speed to break away
+    if (this.mode === 'hunt' && p.state === 'alive') this.emitTo(p, { e: 'adrenaline', t: HUNT.adrenaline });
     this.checkEnd();
   }
   revive(t, hp, by) {
@@ -504,7 +560,11 @@ export class Game {
     if (this.over) return;
     this.time += dt;
 
-    while (this.pending.length && this.pending[0].t <= this.time) this.pending.shift().fn();
+    if (this.pending.length && this.pending.some((a) => a.t <= this.time)) {
+      const due = this.pending.filter((a) => a.t <= this.time).sort((a, b) => a.t - b.t);
+      this.pending = this.pending.filter((a) => a.t > this.time);
+      for (const a of due) { if (this.over) return; a.fn(); }
+    }
 
     const ez = MAP.escapeZone;
     for (const p of this.players.values()) {

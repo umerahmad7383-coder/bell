@@ -36,7 +36,8 @@ console.log('MOVEMENT');
   assert(m.x - lx < HUNT.walk * 2 * 1.2 + 0.6, `a client claiming 12 m/s still only gets walking speed from the server (${(m.x - lx).toFixed(1)} m in 2 s)`);
   place(m, 12.5, 22.5); lx = m.x; let rageSecs = 0;
   run(g, 8, () => { m.onMove([m.x + (m.sprinting || m.rage > 0.1 ? HUNT.rage : HUNT.walk) / 15, m.z, Math.PI / 2, 1]); if (m.sprinting) rageSecs += 1 / 15; });
-  assert(rageSecs > 3.3 && rageSecs < 4.8, `rage (faster than a sprinting survivor) lasts about ${HUNT.rageMax} s, then runs out (${rageSecs.toFixed(1)} s)`);
+  assert(rageSecs > HUNT.rageMax * 0.8 && rageSecs < HUNT.rageMax * 1.25, `rage lasts about ${HUNT.rageMax} s, then runs out (${rageSecs.toFixed(1)} s)`);
+  assert(HUNT.walk < 3.2 && HUNT.rage < 5.5, `he walks barely faster than a survivor walks (${HUNT.walk} vs 2.75) and rages barely faster than one sprints (${HUNT.rage} vs 5.3)`);
   // closed door
   const di = MAP.doorAt[idx(13, 14)]; place(m, 14.5, 14.5);
   run(g, 1, () => m.onMove([m.x - 0.2, m.z, -Math.PI / 2, 0]));
@@ -60,31 +61,38 @@ console.log('ATTACK');
   m.attackCd = 0; p.x = 22; p.hp = 1; m.act({ k: 'attack' }); run(g, 0.7); assert(p.state === 'downed', 'last hit puts the survivor down');
   m.attackCd = 0; m.act({ k: 'attack' }); run(g, 0.7); assert(p.state === 'downed', 'he cannot finish off a downed survivor (teammates can still revive)');
 }
+{
+  const { g, m, evs } = mk(3); m.grace = 0;
+  const p = g.players.get(2), q = g.players.get(3); q.x = 2; q.z = 22;
+  place(m, 20.5, 22.5, Math.PI / 2); p.x = 22; p.z = 22.5;
+  evs.length = 0; m.act({ k: 'attack' }); run(g, HUNT.windup + 0.1);
+  assert(evs.some((e) => e.e === 'adrenaline' && e.t === HUNT.adrenaline), `a survivor who takes a hit and stays up gets ${HUNT.adrenaline} s of adrenaline to break away`);
+}
 console.log('ABILITIES');
 {
   const { g, m, evs } = mk(3); m.grace = 0; m.cd = { tp: 0, trap: 0, lights: 0 };
   const p = g.players.get(2), q = g.players.get(3); q.x = 2; q.z = 22; p.x = 40; p.z = 30;
   place(m, 20.5, 22.5, Math.PI / 2);
   m.act({ k: 'tp' });
-  assert(Math.abs(m.x - 28.5) < 0.6 && m.cd.tp > 20 && m.attackCd >= 1, `teleport: ${HUNT.tpRange} m forward, ${HUNT.tpCd} s cooldown, and no instant strike after it`);
+  assert(Math.abs(m.x - (20.5 + HUNT.tpRange)) < 0.6 && m.cd.tp > HUNT.tpCd - 1 && m.attackCd >= 1, `teleport: ${HUNT.tpRange} m forward, ${HUNT.tpCd} s cooldown, and no instant strike after it`);
   m.cd.tp = 0; place(m, 20.5, 21.5, Math.PI); m.act({ k: 'tp' }); assert(m.z > 21, 'teleport does not pass through walls');
   place(m, 30.5, 22.5); m.act({ k: 'trap' });
   assert(m.traps.length === 1 && evs.some((e) => e.e === 'trap+'), 'places a trap');
-  p.x = 30.5; p.z = 22.5; p.flags = 8; run(g, 1); assert(!(p.rootT > 0), 'a fresh trap is not armed yet');
-  run(g, 1); assert(p.rootT > 1.5 && m.traps.length === 0, `walking over an armed trap holds the survivor for ${HUNT.trapRoot} s`);
+  p.x = 30.5; p.z = 22.5; p.flags = 8; run(g, HUNT.trapArm * 0.5); assert(!(p.rootT > 0), 'a fresh trap is not armed yet');
+  run(g, HUNT.trapArm * 0.5 + 0.2); assert(p.rootT > HUNT.trapRoot - 0.5 && m.traps.length === 0, `walking over an armed trap holds the survivor for ${HUNT.trapRoot} s`);
   const x0 = p.x; g.onState(2, [p.x + 0.3, 0, p.z, 0, 0, 8]); assert(p.x === x0, 'a trapped survivor cannot move');
   m.cd.trap = 0; place(m, 34.5, 22.5); m.act({ k: 'trap' }); g.time += 3; q.x = 34.5; q.z = 22.5; q.flags = 1 | 8; run(g, 1);
   assert(!(q.rootT > 0) && m.traps.length === 1, 'crouch-walking over a trap does not set it off');
   m.cd.trap = 0; place(m, 7.5, 22.5); m.act({ k: 'trap' }); assert(m.traps.length === 1, 'traps cannot be placed across the exit');
-  m.act({ k: 'lights' }); assert(evs.some((e) => e.e === 'sabotage') && m.cd.lights > 40, 'sabotages the lights on a long cooldown');
+  m.act({ k: 'lights' }); assert(evs.some((e) => e.e === 'sabotage') && m.cd.lights > 60, `sabotages the lights on a long cooldown (${HUNT.lightsCd} s)`);
 }
 console.log('SURVIVOR COUNTERPLAY');
 {
   const { g, m, evs, toHunter } = mk(3); m.grace = 0;
   const p = g.players.get(2), q = g.players.get(3); q.x = 2; q.z = 22;
   place(m, 20.5, 22.5, -Math.PI / 2); p.x = 16; p.z = 22.5; p.ry = -Math.PI / 2; p.flags = 2; // torch on, aimed at him (player forward = -sin, -cos)
-  run(g, 0.8); assert(m.stunT <= 0, 'a quick flash of torchlight does nothing');
-  run(g, 0.7); assert(m.stunT > 0 && evs.some((e) => e.e === 'mstun' && e.kind === 'torch'), 'holding the beam on his face blinds him');
+  run(g, HUNT.torchTime * 0.6); assert(m.stunT <= 0, 'a quick flash of torchlight does nothing');
+  run(g, HUNT.torchTime * 0.6); assert(m.stunT > 0 && evs.some((e) => e.e === 'mstun' && e.kind === 'torch'), 'holding the beam on his face blinds him');
   m.stunT = 0; run(g, 3); assert(m.stunT <= 0, 'then he is immune to it for a while');
   p.inv[0] = { id: 999, type: 'bell' }; g.onUse(2, { slot: 0 });
   assert(m.stunT >= HUNT.bellStun - 0.1, `the hand bell stuns him for ${HUNT.bellStun} s`);
@@ -92,7 +100,10 @@ console.log('SURVIVOR COUNTERPLAY');
   // hearing
   toHunter.length = 0; m.stunT = 0; p.x = 28; p.flags = 8 | 4; run(g, 1.2);
   assert(toHunter.some(([e, d]) => e === 'g:ev' && d.e === 'heard'), 'he hears a survivor sprinting nearby (shown to him as a pulse)');
-  toHunter.length = 0; p.flags = 1 | 8; run(g, 1.5);
+  { const h = toHunter.find(([e, d]) => e === 'g:ev' && d.e === 'heard'); assert(h && Math.hypot(h[1].p[0] - p.x, h[1].p[2] - p.z) <= HUNT.fuzz + 0.01, 'the pulse shows roughly (not exactly) where the sound came from'); }
+  place(m, 20.5, 22.5); toHunter.length = 0; p.x = 31.5; run(g, 1.2);
+  assert(!toHunter.some(([e, d]) => e === 'g:ev' && d.e === 'heard'), `sprinting 11 m away is beyond his hearing (${(13 * HUNT.hearing).toFixed(1)} m in the open)`);
+  p.x = 28; toHunter.length = 0; p.flags = 1 | 8; run(g, 1.5);
   assert(!toHunter.some(([e, d]) => e === 'g:ev' && d.e === 'heard'), 'but not one crouch-walking 7 m away');
   toHunter.length = 0; p.flags = 0; g.onVoice(2, 0.9);
   assert(toHunter.some(([e, d]) => e === 'g:ev' && d.e === 'heard' && d.k === 'voice'), 'talking loudly on voice chat gives your position away');

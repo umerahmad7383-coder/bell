@@ -246,6 +246,48 @@ export class AudioSys {
     for (const f of [690, 1105, 1760, 2390]) { const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.setValueAtTime(f, t); o.frequency.linearRampToValueAtTime(f * 0.86, t + dur); const g = ctx.createGain(); g.gain.value = 0.2; o.connect(g); g.connect(am); o.start(t); o.stop(t + dur + 0.1); }
     am.connect(env); env.connect(out); hammer.start(t); hammer.stop(t + dur + 0.1);
   }
+  // ---- South Wing lures (v0.9) ----
+  /** someone hammering out a dissonant chord progression on an out-of-tune upright */
+  piano(pos, dur = 4) {
+    const chords = [[130.8, 155.6, 185, 261.6], [123.5, 146.8, 174.6, 246.9], [110, 130.8, 164.8, 207.7], [103.8, 123.5, 155.6, 196]];
+    for (let i = 0; i * 0.5 < dur; i++) {
+      const ch = chords[i % chords.length], when = i * 0.5 + R(0, 0.04);
+      for (const f of ch) { const ff = f * (1 + R(-0.015, 0.015)); this.tone({ freq: ff, dur: 1.6, type: 'triangle', gain: 0.16, pos, when, attack: 0.004, wet: 1.2 }); this.tone({ freq: ff * 2.005, dur: 0.7, gain: 0.05, pos, when, attack: 0.003, wet: 1.2 }); }
+      this.noise({ dur: 0.05, type: 'bandpass', freq: 2200, q: 2, gain: 0.25, pos, when, wet: 0.6 }); // hammers
+      if (i % 2) this.tone({ freq: 1046 * R(0.97, 1.03), dur: 0.9, gain: 0.07, pos, when: when + 0.25, wet: 1.4 }); // a stray high note
+    }
+  }
+  /** a valve radio warming up: crackle, a station drifting in and out, a 1930s dance tune, far too loud */
+  radio(pos, delay = 6, dur = 12) {
+    this.noise({ dur: 0.08, type: 'highpass', freq: 3000, gain: 0.4, pos, wet: 0.2 }); // the switch
+    this.tone({ freq: 60, dur: delay, gain: 0.05, pos, attack: delay * 0.8, wet: 0.2 }); // the valves warming
+    const tune = [392, 440, 494, 523, 494, 440, 392, 330, 349, 392, 440, 392];
+    for (let k = 0; k < dur; k += 0.25) {
+      const when = delay + k;
+      this.noise({ dur: 0.3, type: 'bandpass', freq: R(1200, 3800), q: 0.8, gain: 0.22 + 0.2 * Math.abs(Math.sin(k * 0.9)), pos, when, wet: 0.4 });
+      if ((k * 4) % 2 === 0) { const f = tune[((k * 2) | 0) % tune.length]; this.tone({ freq: f, dur: 0.45, type: 'square', gain: 0.07, pos, when, wet: 0.6, vibrato: 4 }); this.tone({ freq: f / 2, dur: 0.45, type: 'triangle', gain: 0.08, pos, when, wet: 0.6 }); }
+    }
+  }
+  /** THE great bell: three enormous, cracked strokes that the whole building hears */
+  greatBell(pos) {
+    for (let k = 0; k < 3; k++) {
+      const when = k * 1.9;
+      for (const [f, g, d] of [[98, 0.9, 6], [196.5, 0.5, 5], [233, 0.35, 4.5], [293.7, 0.3, 4], [392.4, 0.22, 3.2], [523, 0.12, 2.4], [149, 0.3, 5]]) this.tone({ freq: f * R(0.996, 1.004), dur: d, gain: g, pos, when, attack: 0.004, wet: 1.6, vibrato: f > 300 ? 2 : 0 });
+      this.noise({ dur: 0.5, type: 'bandpass', freq: 1800, q: 1.5, gain: 0.8, pos, when, wet: 1.2 }); // the crack rattling
+      this.tone({ freq: 49, dur: 3, gain: 0.8, when, wet: 0.5 }); // felt in your chest wherever you are
+    }
+  }
+  /** you ran out of air in the locker */
+  gasp(pos) {
+    this.noise({ dur: 0.55, type: 'bandpass', freq: 1100, q: 1.1, gain: 1.1, pos, attack: 0.03, wet: 0.3 });
+    this.noise({ dur: 0.7, type: 'bandpass', freq: 700, q: 1.4, gain: 0.7, pos, attack: 0.2, when: 0.5, wet: 0.3 });
+    this.tone({ freq: 220, to: 160, dur: 0.35, type: 'sawtooth', gain: 0.03, pos, wet: 0.2 });
+  }
+  /** holding your breath: your own heartbeat, very loud, very close */
+  heartbeat(k = 1) { this.tone({ freq: 58, to: 36, dur: 0.18, gain: 0.55 * k, wet: 0 }); this.tone({ freq: 52, to: 32, dur: 0.2, gain: 0.4 * k, when: 0.2, wet: 0 }); }
+  /** a dropped item hitting the floor */
+  thud(pos, soft = false) { this.noise({ dur: 0.09, freq: soft ? 500 : 900, gain: soft ? 0.35 : 0.6, pos, wet: 0.4 }); this.tone({ freq: soft ? 140 : 220, to: 80, dur: 0.09, gain: 0.25, pos, wet: 0.3 }); }
+
   /** breathing, directly behind your head */
   breathBehind() {
     const fx = -Math.sin(this.lyaw), fz = -Math.cos(this.lyaw);

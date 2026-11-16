@@ -5,10 +5,14 @@ import { io } from '../vendor/socket.io.esm.min.js';
 import { Game } from './game.js';
 import { AudioSys } from './audio.js';
 import { Voice } from './voice.js';
+import { MenuScene } from './menubg.js';
 import { PLAYER_COLORS, PlayerModel } from './entities.js';
 import { DIFFICULTY, DIFFICULTY_ORDER, LOOKS, LOOK_KEYS, LOOK_LABELS, cleanLook, randomLook } from '../shared/defs.js';
 
 const $ = (id) => document.getElementById(id);
+/** set a button's text without wiping its icon */
+const setLabel = (btn, text) => { const l = btn.querySelector('.lbl'); if (l) l.textContent = text; else btn.textContent = text; };
+const labelOf = (btn) => { const l = btn.querySelector('.lbl'); return (l || btn).textContent; };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const qs = new URLSearchParams(location.search);
 const SERVER = (qs.get('server') || window.LAST_BELL_SERVER || '').replace(/\/$/, '') || location.origin;
@@ -22,7 +26,9 @@ const settings = { sens: 1, vol: 0.8, fov: 75, bright: 1, quality: 'medium', dyn
 const audio = new AudioSys(); audio.volume = settings.vol;
 for (const [id, key, num] of [['set-sens', 'sens', 1], ['set-vol', 'vol', 1], ['set-fov', 'fov', 1], ['set-bright', 'bright', 1], ['set-quality', 'quality', 0]]) {
   const el = $(id); el.value = settings[key];
-  el.addEventListener('input', () => { settings[key] = num ? Number(el.value) : el.value; store.set('settings', settings); audio.setVolume(settings.vol); if (game) game.applySettings(); });
+  const fill = () => { if (el.type === 'range') el.style.setProperty('--p', `${((el.value - el.min) / (el.max - el.min)) * 100}%`); };
+  fill();
+  el.addEventListener('input', () => { fill(); settings[key] = num ? Number(el.value) : el.value; store.set('settings', settings); audio.setVolume(settings.vol); if (game) game.applySettings(); });
 }
 
 for (const [id, key] of [['set-dynres', 'dynres'], ['set-showfps', 'showfps'], ['set-togglecrouch', 'togglecrouch'], ['set-tips', 'tips'], ['set-jumpscares', 'jumpscares'], ['set-ptt', 'ptt']]) {
@@ -49,7 +55,12 @@ try {
 // ---------------------------------------------------------------- screens
 const MAIN = ['s-menu', 's-lobby', 's-loading'];
 const OVER = ['s-join', 's-settings', 's-controls', 's-pause', 's-end', 's-character'];
-function show(id) { for (const s of MAIN) $(s).hidden = s !== id; }
+const scene = new MenuScene($('menubg'));
+function show(id) {
+  for (const s of MAIN) $(s).hidden = s !== id;
+  // the night-time school behind the menu and the lobby; switched off while a match renders
+  if (id === 's-menu' || id === 's-lobby') scene.start(); else scene.stop();
+}
 function overlay(id, on = true) { $(id).hidden = !on; }
 const closeOverlays = () => OVER.forEach((o) => ($(o).hidden = true));
 // Settings / Controls can be opened from the main menu or from the in-game pause panel. They replace
@@ -134,8 +145,8 @@ $('btn-lobby-character').onclick = openCharacter;
 const socket = io(SERVER, { transports: ['websocket', 'polling'] });
 const conn = $('conn');
 const setConn = (text, cls) => { conn.textContent = text; conn.className = 'conn ' + cls; for (const b of ['btn-create', 'btn-join', 'btn-solo']) $(b).disabled = cls !== 'ok'; };
-setConn('Connecting to server…', '');
-socket.on('connect', () => setConn('Connected to server', 'ok'));
+setConn('Connecting to the server…', '');
+socket.on('connect', () => setConn('Connected to the server', 'ok'));
 socket.on('connect_error', () => setConn(`Cannot reach the game server (${SERVER.replace(/^https?:\/\//, '')}). Retrying…`, 'bad'));
 socket.on('disconnect', () => {
   setConn('Connection lost. Reconnecting…', 'bad');
@@ -150,7 +161,7 @@ const voice = new Voice(socket, audio);
 voice.setPtt(settings.ptt);
 function voiceUi() {
   const b = $('btn-voice');
-  b.textContent = voice.enabled ? (voice.muted ? 'Voice: muted (click to leave)' : 'Voice Chat ON (click to leave)') : 'Enable Voice Chat';
+  setLabel(b, voice.enabled ? (voice.muted ? 'Voice muted (click to turn off)' : 'Voice on (click to turn off)') : 'Turn on voice chat');
   b.classList.toggle('on', voice.enabled);
   $('voice-note').textContent = voice.enabled ? `Voice: connected to ${voice.connected()} of ${voice.peers.size} other player${voice.peers.size === 1 ? '' : 's'} with voice on. In the match it is proximity-based: people fade with distance and walls, and the Headmaster hears you too. ${settings.ptt ? 'Hold V to talk.' : 'M mutes your mic.'}` : '';
 }
@@ -190,7 +201,7 @@ $('btn-join-go').onclick = () => {
 if (qs.get('room')) { codeInput.value = qs.get('room').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); overlay('s-join'); }
 
 // ---------------------------------------------------------------- lobby
-function enterLobby(r) { myId = r.you; $('lobby-chatlog').innerHTML = ''; $('lobby-error').textContent = ''; sysLine('Share the room code or the invite link with your friends.'); show('s-lobby'); }
+function enterLobby(r) { myId = r.you; $('lobby-chatlog').innerHTML = ''; $('lobby-error').textContent = ''; sysLine('Share the room code or the invite link with your friends.'); if (lobby) renderLobby(lobby); show('s-lobby'); }
 function inviteLink() {
   const u = new URL(location.href); u.search = ''; u.hash = '';
   u.searchParams.set('room', lobby.code);
@@ -199,7 +210,8 @@ function inviteLink() {
 }
 async function copy(text, btn) {
   try { await navigator.clipboard.writeText(text); } catch { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
-  const old = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => (btn.textContent = old), 1400);
+  if (btn.dataset.busy) return; btn.dataset.busy = 1;
+  const old = labelOf(btn); setLabel(btn, 'Copied'); setTimeout(() => { setLabel(btn, old); delete btn.dataset.busy; }, 1400);
 }
 $('btn-copy-link').onclick = (e) => lobby && copy(inviteLink(), e.currentTarget);
 $('btn-copy-code').onclick = (e) => lobby && copy(lobby.code, e.currentTarget);
@@ -209,6 +221,7 @@ $('btn-quit').onclick = leave;
 function leave() { voice.disable(); socket.emit('lobby:leave'); lobby = null; stopGame(); closeOverlays(); show('s-menu'); }
 document.querySelectorAll('.mode[data-mode] input').forEach((inp) => inp.addEventListener('change', () => { if (lobby && lobby.hostId === myId) socket.emit('lobby:mode', inp.value); }));
 $('difficulties').addEventListener('click', (e) => { const el = e.target.closest('[data-diff]'); if (el && lobby && lobby.hostId === myId) socket.emit('lobby:difficulty', el.dataset.diff); });
+$('difficulties').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { const el = e.target.closest('[data-diff]'); if (el && lobby && lobby.hostId === myId) { e.preventDefault(); socket.emit('lobby:difficulty', el.dataset.diff); } } });
 $('btn-ready').onclick = () => { const me = lobby && lobby.players.find((p) => p.id === myId); if (me) socket.emit('lobby:ready', !me.ready); };
 $('btn-start').onclick = () => socket.emit('lobby:start', null, (r) => { $('lobby-error').textContent = r && !r.ok ? r.error : ''; });
 $('btn-rematch').onclick = () => socket.emit('lobby:return');
@@ -221,7 +234,10 @@ socket.on('chat', (c) => {
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 });
 
-socket.on('lobby:update', (l) => {
+// The first update can arrive before we know our own id (it is sent just before the reply to
+// create/join), so entering the lobby draws it again once the id is known.
+socket.on('lobby:update', (l) => renderLobby(l));
+function renderLobby(l) {
   const prev = lobby; lobby = l;
   if (prev) {
     for (const p of l.players) if (!prev.players.some((q) => q.id === p.id)) sysLine(`${p.name} joined.`);
@@ -230,9 +246,9 @@ socket.on('lobby:update', (l) => {
   const amHost = l.hostId === myId, me = l.players.find((p) => p.id === myId);
   $('lobby-code').textContent = l.code;
   $('lobby-count').textContent = `${l.players.length} / ${l.max}`;
-  $('lobby-players').innerHTML = l.players.map((p, i) => `<li class="${p.id === myId ? 'me' : ''}"><span class="dot" style="background:${LOOKS.top[cleanLook(p.look, i).top]}"></span><span class="nm">${esc(p.name)}${p.id === myId ? ' <span class="dim">(you)</span>' : ''}</span>${p.voice ? '<span class="v" title="voice chat on">🎙</span>' : ''}${p.id === l.hostId ? '<span class="tag host">Host</span>' : p.ready ? '<span class="tag ready">Ready</span>' : '<span class="tag">Not ready</span>'}</li>`).join('');
+  $('lobby-players').innerHTML = l.players.map((p, i) => `<li class="${p.id === myId ? 'me' : ''}"><span class="dot" style="background:${LOOKS.top[cleanLook(p.look, i).top]}"></span><span class="nm">${esc(p.name)}${p.id === myId ? ' <span class="dim">(you)</span>' : ''}</span>${p.voice ? '<svg class="v" aria-label="voice chat on"><use href="#i-mic"/></svg>' : '<span></span>'}${p.id === l.hostId ? '<span class="tag host">Host</span>' : p.ready ? '<span class="tag ready">Present</span>' : '<span class="tag">Not ready</span>'}</li>`).join('');
   $('btn-start').hidden = !amHost; $('btn-ready').hidden = amHost;
-  $('btn-ready').textContent = me && me.ready ? 'Ready ✓ (click to cancel)' : 'Ready up';
+  setLabel($('btn-ready'), me && me.ready ? 'You are ready (click to cancel)' : 'Ready up');
   $('btn-ready').classList.toggle('on', !!(me && me.ready));
   const waiting = l.players.filter((p) => p.id !== l.hostId && !p.ready).length;
   $('btn-start').disabled = l.state === 'playing' || waiting > 0;
@@ -242,13 +258,14 @@ socket.on('lobby:update', (l) => {
   document.querySelectorAll('.mode[data-mode]').forEach((el) => { const on = el.dataset.mode === l.mode; el.classList.toggle('on', on); el.querySelector('input').checked = on; el.querySelector('input').disabled = !amHost || l.state === 'playing'; });
   $('difficulties').style.opacity = l.mode === 'hunt' ? 0.35 : 1;
   // difficulty: the host picks, everyone sees it
-  $('diff-note').textContent = l.mode === 'hunt' ? '(Escape mode only — Hunt has its own balance)' : amHost ? '' : '(the host chooses)';
-  $('difficulties').innerHTML = DIFFICULTY_ORDER.map((k) => `<div class="mode${k === l.difficulty ? ' sel' : ''}${amHost && l.state !== 'playing' ? '' : ' locked'}" data-diff="${k}"><b>${DIFFICULTY[k].label}</b><span>${DIFFICULTY[k].blurb}</span></div>`).join('');
+  $('diff-note').textContent = l.mode === 'hunt' ? '(Escape only. Hunt has its own balance)' : amHost ? '' : '(the host chooses)';
+  const bells = (n) => [0, 1, 2, 3].map((i) => `<svg class="${i < n ? '' : 'off'}"><use href="#i-bell"/></svg>`).join('');
+  $('difficulties').innerHTML = DIFFICULTY_ORDER.map((k, n) => `<div class="diff${k === l.difficulty ? ' sel' : ''}${amHost && l.state !== 'playing' ? '' : ' locked'}" data-diff="${k}" role="button" tabindex="0" aria-pressed="${k === l.difficulty}"><div class="dh"><b>${DIFFICULTY[k].label}</b><i class="pips" aria-label="${n + 1} of 4">${bells(n + 1)}</i></div><span>${DIFFICULTY[k].blurb}</span></div>`).join('');
   $('btn-rematch').hidden = !amHost;
   $('end-note').textContent = amHost ? '' : 'Waiting for the host to start a rematch…';
   // rematch: host sent everyone back to the lobby
   if (l.state === 'lobby' && (game || !$('s-end').hidden)) { stopGame(); closeOverlays(); show('s-lobby'); }
-});
+}
 
 // ---------------------------------------------------------------- match lifecycle
 const TIPS = [
@@ -290,7 +307,7 @@ socket.on('game:over', (sum) => {
   const mins = Math.floor(sum.time / 60), secs = String(sum.time % 60).padStart(2, '0');
   const escaped = sum.players.filter((p) => p.state === 'escaped').length;
   const iAmHunter = sum.hunter && sum.hunter.id === myId;
-  $('end-title').textContent = iAmHunter ? (sum.win ? 'THEY GOT AWAY' : 'CLASS IS NOT DISMISSED') : sum.win ? (escaped === sum.players.length ? 'EVERYONE ESCAPED' : 'ESCAPED') : 'CLASS IS NOT DISMISSED';
+  $('end-title').textContent = iAmHunter ? (sum.win ? 'They got away' : 'Class is not dismissed') : sum.win ? (escaped === sum.players.length ? 'Everyone escaped' : 'Escaped') : 'Class is not dismissed';
   $('end-title').classList.toggle('lose', iAmHunter ? sum.win : !sum.win);
   const diff = sum.mode === 'hunt' ? ' Hunt Mode.' : DIFFICULTY[sum.difficulty] ? ` Difficulty: ${DIFFICULTY[sum.difficulty].label}.` : '';
   $('end-sub').textContent = (sum.win ? `${escaped} of ${sum.players.length} made it out in ${mins}:${secs}.` : `Nobody left the school. You lasted ${mins}:${secs} and completed ${sum.stage} of 6 steps.`) + diff;

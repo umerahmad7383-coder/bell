@@ -1,6 +1,6 @@
 {
   "name": "the-last-bell",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "description": "THE LAST BELL - online co-op horror game (Three.js + Rapier + Socket.IO)",
   "type": "module",
   "private": true,

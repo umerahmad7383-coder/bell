@@ -1,6 +1,6 @@
 // Rapier collision world + first-person kinematic character controller.
 // No Three.js in here, so it can also be exercised headlessly in Node (test/physics.js).
-import { MAP, W, H, WALL, STAIRS, BASEMENT_Y, floorY } from '../shared/map.js';
+import { MAP, W, H, WALL, STAIRS, BASEMENT_Y, STAGE_Y, floorY } from '../shared/map.js';
 
 export const PLAYER_R = 0.3;
 export const STAND_HALF = 0.55;   // capsule half-height standing  (total 1.7 m)
@@ -23,6 +23,7 @@ export function buildPhysics(RAPIER) {
       if (kind === -1) box(cx, 0.1, z + 0.5, hx, 3.4, 0.5);
       else if (kind === 0) box(cx, -0.25, z + 0.5, hx, 0.25, 0.5);
       else if (kind === 2) box(cx, BASEMENT_Y - 0.25, z + 0.5, hx, 0.25, 0.5);
+      else if (kind === 3) box(cx, STAGE_Y - 0.25, z + 0.5, hx, 0.25, 0.5); // the stage: a step up you can walk onto
       x = x1;
     }
   }
@@ -80,6 +81,21 @@ export function buildPhysics(RAPIER) {
       case 'console': box(p.x + 0.1, y + 0.45, p.z, 0.4, 0.45, p.d / 2); break;
       case 'bigdesk': box(p.x, y + 0.4, p.z, 0.95, 0.4, 0.42); break;
       case 'boiler': box(p.x, y + 1.1, p.z, 0.9, 1.1, 0.9); break;
+      // ---- South Wing ----
+      case 'seats': box(p.x, y + 0.5, p.z, p.w / 2, 0.5, 0.36); break;
+      case 'lectern': box(p.x, y + 0.6, p.z, 0.3, 0.6, 0.25); break;
+      case 'greatbell': box(p.x, y + 1.2, p.z, p.w / 2 - 0.1, 1.2, 0.4); break;
+      case 'piano': box(p.x, y + 0.65, p.z + 0.1, p.w / 2 - 0.05, 0.65, 0.32); break;
+      case 'stands': case 'bench': box(p.x, y + 0.25, p.z, p.w / 2 - 0.05, 0.25, 0.3); break;
+      case 'drums': box(p.x, y + 0.45, p.z, p.w / 2 - 0.1, 0.45, 0.4); break;
+      case 'bed': box(p.x, y + 1.08, p.z, p.w / 2 - 0.02, 0.08, 0.45); break; // high frame: you can crawl underneath
+      case 'medcab': box(p.x + off[0], y + 1.0, p.z + off[1], p.w / 2, 1.0, 0.25); break;
+      case 'easel': box(p.x, y + 0.8, p.z, 0.3, 0.8, 0.3); break;
+      case 'kiln': box(p.x, y + 0.55, p.z, 0.42, 0.55, 0.42); break;
+      case 'mannequin': box(p.x, y + 0.9, p.z, 0.22, 0.9, 0.22); break;
+      case 'screen': box(p.x, y + 0.9, p.z, 0.45, 0.9, 0.12); break;
+      case 'iv': box(p.x, y + 0.95, p.z, 0.12, 0.95, 0.12); break;
+      case 'trophy': box(p.x + off[0], y + 1.0, p.z + off[1], p.w / 2, 1.0, 0.27); break;
     }
   }
   for (const L of MAP.lockers) {

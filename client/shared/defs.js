@@ -9,27 +9,30 @@
  *   2  + cuts you off in long chases, looks under tables, guards downed players, remembers where he
  *        lost you, learns which lockers get used, goes for wounded players, stops trusting bottles
  *   3  + everything above, harder and sooner; walks straight to whoever threw the bottle
+ * `windup` is how long his swing takes (he keeps lunging forward while it winds up, so walking
+ * away does not dodge it). `breath` is the chance that holding your breath in a locker he is
+ * checking makes him walk on.
  */
 export const DIFFICULTY = {
   beginner: {
     label: 'Beginner', blurb: 'Slow, short-sighted and easy to fool. You can take three hits. Extra supplies.',
     speed: 0.85, vision: 0.8, detect: 0.65, hearing: 0.75, grace: 25, lost: 2.2, search: 0.7, locker: 0.4,
-    retreat: 10, doorWait: 1.5, hp: 3, bleed: 110, stalk: 1.6, smart: 0, supplies: 1.5, aggr: 0.6, bell: 12,
+    retreat: 10, doorWait: 1.5, hp: 3, bleed: 110, stalk: 1.6, smart: 0, supplies: 1.5, aggr: 0.6, bell: 12, windup: 0.62, breath: 0.9,
   },
   intermediate: {
     label: 'Intermediate', blurb: 'The standard Headmaster. Predicts where you ran, checks lockers, patrols near your objective.',
     speed: 1, vision: 1, detect: 1, hearing: 1, grace: 12, lost: 3, search: 1, locker: 1,
-    retreat: 7, doorWait: 1, hp: 2, bleed: 80, stalk: 1, smart: 1, supplies: 1, aggr: 1, bell: 9,
+    retreat: 7, doorWait: 1, hp: 2, bleed: 80, stalk: 1, smart: 1, supplies: 1, aggr: 1, bell: 9, windup: 0.52, breath: 0.7,
   },
   hard: {
     label: 'Hard', blurb: 'Faster and sharper. Cuts you off, looks under tables, guards the wounded, and stops falling for bottles.',
     speed: 1.08, vision: 1.2, detect: 1.4, hearing: 1.25, grace: 8, lost: 4.5, search: 1.4, locker: 1.6,
-    retreat: 5, doorWait: 0.7, hp: 2, bleed: 60, stalk: 0.7, smart: 2, supplies: 0.8, aggr: 1.15, bell: 8,
+    retreat: 5, doorWait: 0.7, hp: 2, bleed: 60, stalk: 0.7, smart: 2, supplies: 0.8, aggr: 1.15, bell: 8, windup: 0.44, breath: 0.5,
   },
   nightmare: {
     label: 'Nightmare', blurb: 'You cannot outrun him. One hit and you are down. Fewer supplies. He learns how you play.',
     speed: 1.16, vision: 1.4, detect: 2, hearing: 1.5, grace: 5, lost: 6, search: 1.8, locker: 2.2,
-    retreat: 3.5, doorWait: 0.45, hp: 1, bleed: 45, stalk: 0.5, smart: 3, supplies: 0.6, aggr: 1.3, bell: 6,
+    retreat: 3.5, doorWait: 0.45, hp: 1, bleed: 45, stalk: 0.5, smart: 3, supplies: 0.6, aggr: 1.3, bell: 6, windup: 0.36, breath: 0.35,
   },
 };
 export const DIFFICULTY_ORDER = ['beginner', 'intermediate', 'hard', 'nightmare'];

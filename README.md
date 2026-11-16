@@ -17,6 +17,17 @@ An online co-op horror game for 2–8 players. You and your friends are locked i
 | Hunt Mode (player-controlled Headmaster) | Built. Rules are covered by `test/hunt.js`; balance has not been played by real groups yet. |
 | Voice chat | Built. Connection and audio flow were tested between two browsers on one machine with a fake microphone. **Not tested between real networks or by ear.** |
 
+## What is new in 0.9
+
+- **Fixed: walking backwards no longer dodges him.** He used to stand still for his whole swing, so anyone walking away (even backwards) was always out of reach when it landed. He now keeps lunging while the swing winds up, the wind-up is shorter on harder difficulties, and walking backwards is slower than walking forwards (sideways a little slower too).
+- **Hunt Mode rebalanced.** The player Headmaster was far too strong. He now walks barely faster than survivors walk, rages barely faster than they sprint (and for less time), teleports less far and less often, has fewer traps, sees less far in the dark and hears less precisely. Survivors who take a hit get a short burst of adrenaline. All numbers are in `HUNT` at the top of `server/hunter.js`.
+- **A bigger school: the South Wing.** A second loop of corridors (West Wing, East Wing, Lower Hall) and seven new rooms: the Auditorium (crouch between the seat rows to hide), the Stage, the Music Room, the Nurse's Office (crawl under the hospital beds), the Art Room, the Janitor's Closet and the Locker Room. 17 more lockers, 9 more doors.
+- **Lures.** The piano (pulls him to the Music Room), the janitor's radio (starts blaring six seconds after you switch it on, so you can get away first) and the great bell on the stage (once per match, the whole school hears it).
+- **Hold your breath.** Hiding in a locker he is checking? Hold Space. It often makes him walk on, unless he watched you climb in. Run out of air and you gasp.
+- **Dropping and tossing.** Tap G to drop what you hold; hold G and let go to toss it a few metres to a teammate. Dropped items fall from your hand to the floor.
+- **More detail everywhere:** brass name plaques over doors, glowing exit signs, stopped clocks, posters, loose papers, cobwebs, tiled washrooms, and an art-room mannequin that turns its head when you are not looking.
+- **New interface:** a live night-time scene of the school behind the menu, hall-pass buttons, chalkboard panels, a class register in the lobby, switches and sliders in Settings, and a cleaner HUD. Fonts are bundled in `client/assets/fonts` (open licences, see `LICENSES.txt`).
+
 ## Run it on your own PC
 
 Needs [Node.js](https://nodejs.org) 18 or newer.
@@ -123,7 +134,8 @@ Same-network check without deploying: run `npm start` on one PC, find its local 
 | `Q` or middle click | Ping what you are looking at for your team; when downed, call for help (he can hear it) |
 | `1`–`4`, mouse wheel | Select inventory slot |
 | Left click | Use held item |
-| `G` | Drop held item (how you hand things to teammates) |
+| `G` | Tap: drop held item. Hold and release: toss it a few metres (how you hand things to teammates) |
+| `Space` | In a locker: hold your breath |
 | `Tab` | Notebook: objectives and found notes |
 | `Enter` | Text chat |
 | `Esc` | Release the mouse / menu |
@@ -143,17 +155,17 @@ Same-network check without deploying: run `npm start` on one PC, find its local 
 
 | The Headmaster can | Limits that keep it fair |
 |---|---|
-| See in the dark (red night vision) | Only about 12 m, and no name tags over survivors |
-| Walk at 3.5 m/s (survivors walk 2.75, sprint 5.3) | Frozen for the first 15 s |
-| Rage: 5.7 m/s while holding `Shift` | Lasts 4 s, about 10 s to recharge |
-| Attack with left click | Half-second wind-up everyone hears; a miss costs 1.6 s; after a hit he cannot attack for 6 s and is slowed for 3.5 s; he cannot hit downed players |
-| Hear footsteps, doors, voices, bottles as pulses through walls | Crouch-walking is silent beyond about a metre; bottles make decoy pulses |
-| Teleport 8 m forward (`R`) | 25 s cooldown, not through walls or closed doors, no strike for 1.2 s after |
-| Set traps (`T`), up to 3 | Arm after 1.5 s; hold for 2.5 s and do no damage; crouch-walking over one is safe; not allowed near the exit |
-| Kill the lights (`Q`): torches near him die for a moment | 45 s cooldown |
-| Force doors and rip open lockers (`E`) | Doors take 0.5 s and he cannot close them; a locker takes 1.4 s standing still |
+| See in the dark (red night vision) | Only about 9 m, and no name tags over survivors |
+| Walk at 3.05 m/s (survivors walk 2.75, sprint 5.3) | Frozen for the first 20 s |
+| Rage: 5.4 m/s while holding `Shift` | Lasts 3 s, 10 s to recharge |
+| Attack with left click | 0.6 s wind-up everyone hears; a miss costs 2 s; after a hit he cannot attack for 8 s and is slowed for 4.5 s, and the survivor gets 2.5 s of adrenaline; he cannot hit downed players |
+| Hear footsteps, doors, voices, bottles as pulses through walls | Over 75 % of the AI's hearing range, and the pulse is up to 1.5 m off; crouch-walking is silent beyond about a metre; bottles and lures make decoy pulses |
+| Teleport 6 m forward (`R`) | 40 s cooldown, not through walls or closed doors, no strike for 2 s after |
+| Set traps (`T`), up to 2 | Arm after 2 s; hold for 1.8 s and do no damage; crouch-walking over one is safe; not allowed near the exit |
+| Kill the lights (`Q`): torches near him die for a moment | 70 s cooldown, torches out for 1.6 s |
+| Force doors and rip open lockers (`E`) | Doors take 0.75 s and he cannot close them; a locker takes 1.8 s standing still, and a survivor holding their breath inside goes unnoticed half the time |
 
-Survivors can blind him for 2 s by holding a torch beam on his face for 1.2 s (then he is immune for 14 s), and the hand bell stuns him for 6 s. With one or two survivors, they get three hits instead of two. All of these numbers are in one block at the top of `server/hunter.js`.
+Survivors can blind him for 3 s by holding a torch beam on his face for 0.8 s (then he is immune for 10 s), and the hand bell stuns him for 7 s. With one or two survivors, they get three hits instead of two. All of these numbers are in one block at the top of `server/hunter.js`.
 
 **Difficulty** is chosen by the host in the lobby (Escape mode only):
 
@@ -169,7 +181,11 @@ Survivors can blind him for 2 s by holding a torch beam on his face for 1.2 s (t
 
 **The Headmaster** patrols unpredictably, hears footsteps (running carries far, crouching barely at all), doors, dropped and thrown objects, and investigates. He sees further when your torch is on or the lights are powered, and poorly if you crouch in the dark or under a table. He opens doors (which slows him), searches after losing you, sometimes checks lockers — and always checks the one he watched you climb into. He gets faster and more persistent with every objective you complete. One hit wounds you, a second puts you down; teammates have 80 seconds to revive you with `E` (4 seconds) or a med kit (instant).
 
-**Items:** fuses, office key, gate key, batteries (torch lasts ~6 minutes each), med kit, lockpick, glass bottles (throw to make noise somewhere else), hand bell (drives him off for a few seconds, one use), notes (clues to where things are; shared with the whole team).
+**Items:** fuses, office key, gate key, batteries (torch lasts ~6 minutes each), med kit (the Nurse's Office always has one), lockpick, glass bottles (throw to make noise somewhere else), hand bell (drives him off for a few seconds, one use), notes (clues to where things are and how to survive; shared with the whole team). Tap `G` to drop the item in your hand, hold `G` and let go to toss it.
+
+**Lures** (press `E` on them): the piano in the Music Room (45 s cooldown), the radio in the Janitor's Closet (blares for 12 s, six seconds after you switch it on; 75 s cooldown), and the great bell on the Auditorium stage (once per match, heard everywhere). He comes to the noise.
+
+**Hiding:** lockers (hold `Space` to hold your breath when he checks yours), crouching under tables and hospital beds, and crouching between the Auditorium seat rows or behind the stage drapes.
 
 **Your character.** Menu → **Character** (or **Edit Character** in the lobby) sets skin, clothes, shoes, hair, headwear, extras and build, with a live preview. Other players see that character. In first person you see your own body when you look down, your left hand holding the torch, and your right hand holding whichever inventory slot is selected; other players see what you are holding too.
 
@@ -187,7 +203,7 @@ Text chat (`Enter`) works alongside voice.
 
 ## What is and is not in this version
 
-Built: four difficulty levels; jumpscares; team pings; an on-screen current objective and item hints; start-of-match control tips; optional toggle-crouch; per-player stats on the end screen; a character creator; first-person body and hands; private lobbies with six-character codes, invite links, ready states, host start, host migration, rematch in the same lobby, disconnect handling, spectating after death or escape; the full school on one connected map (main hall, four corridors, three classrooms, science lab, library with a hidden room behind a loose bookshelf, cafeteria, gym, bathroom, storage, security office with a live monitor map, staff room, locked principal's office, stairwell, basement, cellar, boiler room, courtyard and exit gate); 20 doors plus the bookshelf and the gate; 20 lockers; the six-state monster AI plus a "stalk" behaviour; randomised item placement; inventory with drop/share; hiding, wounding, downing, reviving; power and lighting states; randomised paranormal events; procedural 3D audio; text chat; settings.
+Built: four difficulty levels; jumpscares; team pings; an on-screen current objective and item hints; start-of-match control tips; optional toggle-crouch; per-player stats on the end screen; a character creator; first-person body and hands; private lobbies with six-character codes, invite links, ready states, host start, host migration, rematch in the same lobby, disconnect handling, spectating after death or escape; the full school on one connected map (main hall, seven corridors, three classrooms, science lab, library with a hidden room behind a loose bookshelf, cafeteria, gym, bathroom, storage, security office with a live monitor map, staff room, locked principal's office, stairwell, basement, cellar, boiler room, courtyard and exit gate, plus the South Wing: auditorium and stage, music room, nurse's office, art room, janitor's closet, locker room); 29 doors plus the bookshelf and the gate; 37 lockers; three lures; holding your breath in lockers; the six-state monster AI plus a "stalk" behaviour; randomised item placement; inventory with drop/share; hiding, wounding, downing, reviving; power and lighting states; randomised paranormal events; procedural 3D audio; text chat; settings.
 
 Not built, or simplified:
 
@@ -254,6 +270,7 @@ client/shared/defs.js  difficulty levels, item codes, character options
 scripts/floorplan.js   map generator (not served to players)
 client/js/audio.js   synthesised sound
 client/js/textures.js  procedurally painted textures
+client/js/menubg.js    the animated school-at-night behind the menu
 client/vendor/       three.js, Rapier, Socket.IO client (copied from npm by `npm run vendor`)
 ```
 

@@ -5,24 +5,31 @@
 import { MAP, W, FLOOR, idx, inBounds, lineOfSight, floorY } from '../client/shared/map.js';
 import { MSTATE } from './monster.js';
 
+// v0.9 rebalance: the player Headmaster was far too strong (he out-walked survivors, out-raged
+// sprinters, teleported every 25 s and saw 12 m in the dark). He now has to out-think them.
 export const HUNT = {
-  grace: 15,        // seconds he is frozen at the start while survivors scatter
-  walk: 3.5,        // m/s. Survivors walk 2.75 and sprint 5.3
-  rage: 5.7,        // m/s while raging (Shift) — slightly faster than a sprinting survivor...
-  rageMax: 4,       // ...but only for this many seconds
-  rageRegen: 0.4,   // rage seconds regained per second (about 10 s for a full bar)
-  windup: 0.5,      // attack wind-up: he growls and slows a little, survivors get a moment to break away
-  reach: 2.1,
-  missCd: 1.6,      // can't swing again for this long after a miss
-  hitLock: 6,       // ...or this long after a hit
-  hitSlow: 3.5,     // and he is slowed for this long after a hit, so the wounded can run
-  tpRange: 8, tpCd: 25, tpLock: 1.2,
-  trapCd: 18, trapMax: 3, trapArm: 1.5, trapRoot: 2.5,
-  lightsCd: 45, lightsDur: 8,
-  bellStun: 6,      // hand bell
-  torchStun: 2, torchTime: 1.2, torchRange: 7, torchImmune: 14, // hold a torch beam on his face
-  lockerTime: 1.4,  // ripping a locker open leaves him standing still
-  doorTime: 0.5,
+  grace: 20,        // seconds he is frozen at the start while survivors scatter
+  walk: 3.05,       // m/s. Survivors walk 2.75 (1.9 backwards) and sprint 5.3
+  rage: 5.4,        // m/s while raging (Shift): barely faster than a sprinting survivor...
+  rageMax: 3,       // ...and only for this many seconds
+  rageRegen: 0.3,   // rage seconds regained per second (10 s for a full bar)
+  windup: 0.6,      // attack wind-up: he growls and slows a little, survivors get a moment to break away
+  reach: 1.95,
+  missCd: 2.0,      // can't swing again for this long after a miss
+  hitLock: 8,       // ...or this long after a hit
+  hitSlow: 4.5,     // and he is slowed for this long after a hit, so the wounded can run
+  adrenaline: 2.5,  // a survivor who takes a hit (and stays up) runs 25 % faster for this long
+  tpRange: 6, tpCd: 40, tpLock: 2,
+  trapCd: 30, trapMax: 2, trapArm: 2, trapRoot: 1.8,
+  lightsCd: 70, lightsDur: 6, blackout: 1.6, // survivors' torches near him die for `blackout` s
+  bellStun: 7,      // hand bell
+  torchStun: 3, torchTime: 0.8, torchRange: 9, torchImmune: 10, // hold a torch beam on his face
+  lockerTime: 1.8,  // ripping a locker open leaves him standing still
+  breath: 0.5,      // chance that a survivor holding their breath in it is not noticed
+  doorTime: 0.75,
+  hearing: 0.75,    // sounds reach him over 75 % of the distance they would reach the AI...
+  fuzz: 1.5,        // ...and the pulse he sees is up to this many metres off where the sound was
+  nightFog: 0.1,    // his night vision fades out after roughly 9 m
 };
 
 const dist = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
@@ -140,7 +147,10 @@ export class HumanMonster {
         g.emit({ e: 'lockerinspect', id: L.id });
         this.busyFn = () => {
           const occ = [...g.players.values()].find((p) => p.hidden === L.id && p.state === 'alive');
-          if (occ) { g.pullFromLocker(occ); this.landHit(occ); } else this.attackCd = Math.max(this.attackCd, 1);
+          if (occ && (occ.flags & 16) && Math.random() < HUNT.breath) { // pressed into the dark corner, not breathing
+            occ.stats.breath++; g.emit({ e: 'lockerpass', id: L.id }); this.attackCd = Math.max(this.attackCd, 1);
+            this.send('g:ev', { e: 'msg', text: 'Empty. ...Is it?', kind: 'info' });
+          } else if (occ) { g.pullFromLocker(occ); this.landHit(occ); } else this.attackCd = Math.max(this.attackCd, 1);
         };
         return;
       }
@@ -164,13 +174,16 @@ export class HumanMonster {
   onNoise(n) {
     if (this.grace > 0) return;
     const d = dist(this.x, this.z, n.x, n.z);
-    let r = n.r;
+    let r = n.r * (n.kind === 'lure' || n.kind === 'trap' ? 1 : HUNT.hearing);
     if (!lineOfSight(this.x, this.z, n.x, n.z, this.opaque)) r *= 0.65;
     if (d > r) return;
     const key = n.src ?? `${n.kind || 'x'}:${Math.round(n.x)}:${Math.round(n.z)}`;
     if (this.g.time - (this.heardAt.get(key) ?? -9) < 0.45) return;
     this.heardAt.set(key, this.g.time);
-    this.send('g:ev', { e: 'heard', p: [r2(n.x), r2(floorY(n.x, n.z)), r2(n.z)], k: n.kind || 'step', loud: r2(Math.min(1, (r - d) / 8 + 0.2)) });
+    // he knows roughly where a sound came from, not exactly (quieter = vaguer)
+    const loud = Math.min(1, (r - d) / 8 + 0.2), f = HUNT.fuzz * (1.2 - loud), a = Math.random() * Math.PI * 2;
+    const px = n.x + Math.cos(a) * f * Math.random(), pz = n.z + Math.sin(a) * f * Math.random();
+    this.send('g:ev', { e: 'heard', p: [r2(px), r2(floorY(n.x, n.z)), r2(pz)], k: n.kind || 'step', loud: r2(loud) });
   }
 
   tick(dt) {

@@ -25,11 +25,15 @@ export const ITEM_HINT = {
   bottle: 'Bottle — left click to throw it; he goes to the noise',
   bell: 'Hand Bell — left click to ring it; drives him off once',
 };
+const DROP_HINT = ' · G drop · hold G to toss';
 export const ITEM_INFO = {
   fuse: ['Fuse', '⚡'], key_principal: ['Office Key', '🗝️'], key_gate: ['Gate Key', '🔑'], battery: ['Battery', '🔋'],
   medkit: ['Med Kit', '⛑️'], lockpick: ['Lockpick', '📎'], bottle: ['Bottle', '🍾'], bell: ['Hand Bell', '🔔'], note: ['Note', '📄'],
 };
 const SEND_HZ = 15;
+export const BACKPEDAL = 0.7, STRAFE = 0.88; // movement speed multipliers (walking backwards / sideways)
+const BREATH_SECS = 7; // how long you can hold your breath in a locker
+const LURE_LABEL = { piano: 'Play the piano — he will come to the noise', radio: 'Switch on the radio — it blares after 6 s', greatbell: 'Ring the great bell — once, and the whole school hears it' };
 const INTERP_DELAY = 120; // ms behind the server; hides network jitter
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -100,7 +104,7 @@ export class Game {
       this.ph.teleport(init.monster[0], floorY(init.monster[0], init.monster[1]), init.monster[1]);
       this.body = null; this.vm = new ViewModel(null, this.T); this.vm.enableClaws();
       this.monster.group.visible = false;
-      scene.fog.density = 0.075; // he sees in the dark, but not far
+      scene.fog.density = this.hunt.nightFog || 0.1; // he sees in the dark, but not far
       this.mh = { rage: 1, grace: this.hunt.grace, tp: 0, trap: 0, lights: 0, atk: 0, slow: 0, stun: 0, traps: 0 }; this.mbusy = 0; this.mwind = 0; this.mstep = 0;
     }
     this.traps = new Map(); (init.traps || []).forEach((t) => this.addTrap(t.id, t.p));
@@ -112,6 +116,8 @@ export class Game {
       [13, 'Hold TAB for the notebook. Crouch with C to move quietly. He hears running.'],
       [22, 'Q pings whatever you are looking at so your team can find it.'],
       [31, 'E opens doors, picks things up and hides you in lockers.'],
+      [42, 'Tap G to drop what you are holding. Hold G and let go to toss it to a teammate.'],
+      [53, 'In a locker and he is checking it? Hold SPACE to hold your breath.'],
     ] : [];
     this.frame = 0; this.prevYaw = -Math.PI / 2; this.prevPitch = 0;
     if (Q.shadows) renderer.shadowMap.autoUpdate = false; // refreshed every second frame in the loop: halves the shadow cost
@@ -120,6 +126,8 @@ export class Game {
     init.doors.forEach(([open, locked], i) => { this.world.setDoor(i, open, locked, true); this.ph.setDoor(i, !!open); });
     init.items.forEach((it) => this.world.addItem(it));
     this.obj = init.obj; this.notes = [...init.notes];
+    this.lureState = (init.lures || []).map(([used, ready]) => ({ used: !!used, readyAt: ready || 0 }));
+    this.breath = 1; this.holding = false; this.gaspLock = false; this.hbT2 = 0; this.inspectMine = 0; this.gHeld = null; this.boostT = 0;
     this.world.setFuses(this.obj.fuses); this.world.setPower(this.obj.power);
     this.inv = [null, null, null, null]; this.sel = 0;
 
@@ -135,14 +143,15 @@ export class Game {
     this.bind();
     this.renderInv(); this.renderNotebook(); this.renderTeam();
     $('hud').hidden = false; $('hud').classList.toggle('monster', this.role === 'monster'); $('mhud').hidden = this.role !== 'monster';
-    $('bar-stamina').querySelector('span').textContent = this.role === 'monster' ? 'RAGE (HOLD SHIFT)' : 'STAMINA';
-    $('hint').textContent = this.role === 'monster' ? 'LMB attack · SHIFT rage · R teleport · T trap · Q lights · E doors/lockers' : 'F torch · Q ping · TAB notebook · M mute · ENTER chat · ESC menu';
+    $('bar-stamina').querySelector('span').textContent = this.role === 'monster' ? 'Rage (hold Shift)' : 'Stamina';
+    const keys = this.role === 'monster' ? [['LMB', 'attack'], ['Shift', 'rage'], ['R', 'teleport'], ['T', 'trap'], ['Q', 'lights'], ['E', 'doors and lockers']] : [['F', 'torch'], ['Q', 'ping'], ['G', 'drop'], ['Tab', 'notebook'], ['M', 'mute'], ['Enter', 'chat'], ['Esc', 'menu']];
+    $('hint').innerHTML = keys.map(([k, v]) => `<span><kbd>${k}</kbd>${v}</span>`).join('');
     if (this.role === 'monster') this.tips = [[1, `You are the Headmaster. You are frozen for ${this.hunt.grace} seconds while they scatter.`], [8, 'Left click attacks. Hold Shift to rage (fast, but it runs out). You see in the dark; sounds they make appear as pulses.'], [16, 'R teleports forward. T sets a trap. Q kills the lights. E opens doors and rips open lockers.'], [24, 'Torch beams held on your face and the hand bell will stun you. Stop them reaching the gate.']];
     else if (this.mode === 'hunt' && this.tips.length) this.tips.unshift([2, `${init.hunter.name} is the Headmaster this round. Hold a torch beam on his face to blind him; crouch over his traps.`]);
     this.resize();
     this.clock = performance.now();
     this.raf = requestAnimationFrame(this.loop);
-    window.__lb = this; // handy for debugging / automated tests
+    window.__lb = this; this.__fy = floorY; // handy for debugging / automated tests
   }
 
   // ------------------------------------------------------------------ input & network wiring
@@ -153,7 +162,7 @@ export class Game {
     on(window, 'resize', () => this.resize());
     on(document, 'keydown', (e) => this.onKey(e, true));
     on(document, 'keyup', (e) => this.onKey(e, false));
-    on(window, 'blur', () => { this.keys = {}; $('notebook').hidden = true; });
+    on(window, 'blur', () => { this.keys = {}; this.gHeld = null; $('notebook').hidden = true; });
     on(document, 'mousemove', (e) => {
       if (!this.locked) return;
       const k = 0.0022 * this.set.sens;
@@ -196,6 +205,12 @@ export class Game {
     if (e.ctrlKey && ['KeyS', 'KeyD', 'KeyA', 'KeyE', 'KeyF', 'KeyG'].includes(c)) e.preventDefault(); // keep browser shortcuts out of the way while crouching
     this.keys[c] = down;
     if (this.voice) { if (c === 'KeyV') this.voice.setPttDown(down); else if (c === 'KeyM' && down && !e.repeat && this.voice.enabled) { this.voice.setMuted(!this.voice.muted); this.audio.click(); } }
+    if (c === 'Space') e.preventDefault();
+    if (c === 'KeyG' && this.role !== 'monster') { // tap = drop, hold and release = toss
+      if (down && !e.repeat && this.gHeld === null && this.inv[this.sel]) this.gHeld = this.time;
+      else if (!down && this.gHeld !== null) { const held = this.time - this.gHeld; this.gHeld = null; this.dropSelected(held); }
+      return;
+    }
     if (!down || e.repeat) return;
     if (this.role === 'monster') {
       if (c === 'Enter') { e.preventDefault(); this.openChat(); }
@@ -210,10 +225,17 @@ export class Game {
     else if (c === 'KeyF') this.toggleFlash();
     else if (c === 'KeyQ') this.ping();
     else if ((c === 'KeyC' || c === 'ControlLeft' || c === 'ControlRight') && this.set.togglecrouch) this.crouchLatch = !this.crouchLatch;
-    else if (c === 'KeyG') { if (this.inv[this.sel]) this.s.emit('g:drop', this.sel); }
     else if (/^Digit[1-4]$/.test(c)) this.select(Number(c[5]) - 1);
   }
-  select(i) { this.sel = i; this.renderInv(); this.audio.ui(); }
+  select(i) { this.sel = i; this.gHeld = null; this.renderInv(); this.audio.ui(); }
+  /** G was tapped (drop at your feet) or held for `held` seconds (toss it further) */
+  dropSelected(held) {
+    const me = this.me;
+    if (!this.inv[this.sel] || this.ended || (me.state !== 'alive' && me.state !== 'downed') || me.hidden >= 0) return;
+    const toss = me.state === 'alive' && held > 0.25 ? Math.min(1, (held - 0.25) / 0.8) : 0;
+    if (toss) { this.s.emit('g:drop', { slot: this.sel, toss: +toss.toFixed(2), ry: +this.yaw.toFixed(3) }); this.audio.throwWhoosh(); this.vm.useItem('bottle'); }
+    else { this.s.emit('g:drop', this.sel); this.vm.reach(); }
+  }
   toggleFlash() {
     if (this.role === 'monster') return;
     if (this.me.state !== 'alive' && this.me.state !== 'downed') return;
@@ -310,6 +332,7 @@ export class Game {
     const rage = (K.ShiftLeft || K.ShiftRight) && fwd > 0 && h.rage > 0.03 && !(h.slow > 0) && !(h.stun > 0);
     let speed = rage ? H.rage : H.walk;
     if (h.stun > 0) speed = H.walk * 0.3; else if (this.mwind > 0) speed *= 0.8; else if (h.slow > 0) speed = H.walk * 0.5;
+    if (fwd < 0) speed *= BACKPEDAL; else if (fwd === 0 && strafe !== 0) speed *= STRAFE;
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     let wx = -sy * fwd + cy * strafe, wz = -cy * fwd - sy * strafe;
     const wl = Math.hypot(wx, wz); if (wl > 0) { wx = (wx / wl) * speed; wz = (wz / wl) * speed; }
@@ -338,7 +361,7 @@ export class Game {
     // night vision: a cold red wash instead of a torch
     this.flash.intensity = 0; this.threat = 0;
     this.amb.color.setHex(0xc79090);
-    let amb = 2.3;
+    let amb = 1.8;
     if (this.lightningT > 0) { this.lightningT -= dt; this.world.windowMat.color.setScalar(this.lightningT > 0.4 ? 7 : 0.5); } else this.world.windowMat.color.setScalar(0.5);
     const fl = $('fx-flash');
     if (this.stunFx) { // blinded: bell = white-out, torch = glare
@@ -471,7 +494,11 @@ export class Game {
         else A.doorClose(pos, e.by === 'ghost');
         break;
       }
-      case 'item+': W.addItem(e.item); break;
+      case 'item+': {
+        W.addItem(e.item, e.from, !!e.toss);
+        if (e.from) { let t = 0; const at = [e.item.x, e.item.y, e.item.z], dur = e.toss ? 0.45 : 0.3; this.fx.push((dt) => { t += dt; if (t >= dur) { A.thud(at, e.item.type === 'note'); return true; } }); }
+        break;
+      }
       case 'item-': W.removeItem(e.id); if (e.by === this.id) A.pickup(); break;
       case 'inv': this.inv = e.inv; this.renderInv(); break;
       case 'obj': this.obj = e.obj; W.setFuses(e.obj.fuses); this.renderNotebook(); break;
@@ -495,7 +522,18 @@ export class Game {
         if (e.id === this.id) { $('fx-locker').classList.toggle('on', e.locker >= 0); if (e.locker >= 0) { this.yaw = Math.atan2(-L.dx, -L.dz); this.pitch = 0; } if (e.pulled) this.shake = 1; }
         break;
       }
-      case 'lockerinspect': { const L = MAP.lockers[e.id]; A.rattle([L.x + 0.5, L.y + 1, L.z + 0.5]); if (this.me.hidden === e.id) this.shake = 0.6; break; }
+      case 'lockerinspect': { const L = MAP.lockers[e.id]; A.rattle([L.x + 0.5, L.y + 1, L.z + 0.5]); if (this.me.hidden === e.id) { this.shake = 0.6; this.inspectMine = 1.8; } break; }
+      case 'lockerpass': { const L = MAP.lockers[e.id]; A.moan([L.x + 0.5 + L.dx * 1.5, L.y + 1.8, L.z + 0.5 + L.dz * 1.5]); if (this.me.hidden === e.id) this.inspectMine = 0; break; }
+      case 'gasp': if (e.id !== this.id) { const L = MAP.lockers[e.locker]; if (L) A.gasp([L.x + 0.5, L.y + 1.5, L.z + 0.5]); } break;
+      case 'lure': {
+        const L = MAP.lures[e.id], pos = [L.x, L.y, L.z];
+        this.lureState[e.id] = { used: !!e.used, readyAt: this.time + (e.ready || 0) };
+        W.lureFx(e.id, e.delay, e.dur);
+        if (L.kind === 'piano') A.piano(pos, e.dur);
+        else if (L.kind === 'radio') A.radio(pos, e.delay, e.dur);
+        else { A.greatBell(pos); this.shake = Math.max(this.shake, 0.5); W.flicker(1.2); }
+        break;
+      }
       case 'fuse': A.fuse([MAP.fuseBox.x, MAP.fuseBox.y, MAP.fuseBox.z]); W.setFuses(e.n); break;
       case 'power': W.setPower(true); A.powerUp(); W.flicker(1.8); break;
       case 'security': A.security(); break;
@@ -517,11 +555,12 @@ export class Game {
         if (t) { if (e.by) { A.clang(t.pos, 1.2); A.noise({ dur: 0.1, type: 'highpass', freq: 2500, gain: 1.4, pos: t.pos }); } this.scene.remove(t.mesh); this.traps.delete(e.id); }
         break;
       }
+      case 'adrenaline': this.boostT = e.t; this.stamina = Math.max(this.stamina, 60); this.exhausted = false; this.toast('Adrenaline. RUN.', 'bad'); break;
       case 'rooted': this.rootT = e.t; this.shake = 1; this.hurtFlash = 0.5; this.toast('A trap! You are held fast.', 'bad'); break;
       case 'sabotage': {
         const c = this.cam.position, d = Math.hypot(e.p[0] - c.x, e.p[1] - c.z);
         if (d < 26) { W.flicker(e.t); A.noise({ dur: 0.6, type: 'highpass', freq: 3500, gain: 0.25, wet: 0.3 }); A.tone({ freq: 50, dur: 1.5, gain: 0.6, wet: 0.3 }); }
-        if (this.role !== 'monster' && d < 14) this.blackout = 2.6; // torches near him die for a moment
+        if (this.role !== 'monster' && d < 14) this.blackout = this.hunt.blackout || 1.6; // torches near him die for a moment
         break;
       }
       case 'mtp': A.noise({ dur: 0.5, type: 'bandpass', freq: 400, q: 2, gain: 0.9, pos: e.to, sweep: 5 }); A.tone({ freq: 90, to: 40, dur: 0.6, gain: 0.8, pos: e.to }); W.flicker(0.8); break;
@@ -630,7 +669,7 @@ export class Game {
     this.updateEffects(dt);
     this.targetT -= dt; if (this.targetT <= 0) { this.targetT = 0.07; this.updateTarget(); }
     for (let i = this.fx.length - 1; i >= 0; i--) if (this.fx[i](dt)) this.fx.splice(i, 1);
-    this.world.update(dt, this.time, this.cam.position);
+    this.world.update(dt, this.time, this.cam.position, this.cam.rotation.y);
     this.audio.setListener(this.cam.position, this.cam.rotation.y);
     if (this.voice && this.voice.enabled) this.voice.frame(dt, (id) => this.voiceWhere(id), this.role === 'survivor' && this.me.state === 'alive' && !this.ended ? (lvl) => this.s.emit('g:voice', +lvl.toFixed(2)) : null);
     this.audio.update(dt, this.ended ? 0 : this.threat, this.ended ? null : this.m, this.world.power, this.ended ? 20000 : this.me.state === 'downed' ? 520 : this.me.state === 'alive' && this.me.hp < this.maxHp ? 4200 : 20000);
@@ -688,6 +727,9 @@ export class Game {
     else { this.regenDelay -= dt; if (this.regenDelay <= 0) this.stamina = Math.min(100, this.stamina + 13 * dt); if (this.exhausted && this.stamina > 30) this.exhausted = false; }
     let speed = downed ? 0.75 : crouch ? 1.45 : sprint ? 5.3 : 2.75;
     if (me.hp === 1 && !downed) speed *= 0.9;
+    // you cannot walk backwards (or crab sideways) as fast as you walk forwards
+    if (!downed) { if (fwd < 0) speed *= BACKPEDAL; else if (fwd === 0 && strafe !== 0) speed *= STRAFE; }
+    if (this.boostT > 0) { this.boostT -= dt; if (!downed) speed *= 1.25; } // adrenaline after a hit (Hunt Mode)
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     let wx = -sy * fwd + cy * strafe, wz = -cy * fwd - sy * strafe;
     const wl = Math.hypot(wx, wz); if (wl > 0) { wx = (wx / wl) * speed; wz = (wz / wl) * speed; }
@@ -732,10 +774,20 @@ export class Game {
 
     // tell the server where we are
     this.sendT -= dt;
-    if (this.sendT <= 0 && controllable) {
+    const inLocker = me.hidden >= 0 && me.state === 'alive' && !this.ended;
+    if (inLocker) {
+      // hold SPACE to hold your breath while he checks your locker
+      if (K.Space && !this.gaspLock && this.breath > 0) {
+        this.holding = true; this.breath = Math.max(0, this.breath - dt / BREATH_SECS);
+        this.hbT2 -= dt; if (this.hbT2 <= 0) { this.hbT2 = 0.78 - (1 - this.breath) * 0.38; this.audio.heartbeat(0.5 + (1 - this.breath) * 0.7); }
+        if (this.breath <= 0) { this.holding = false; this.gaspLock = true; this.audio.gasp(null); this.s.emit('g:gasp'); this.toast('You gasp for air.', 'bad'); this.shake = 0.5; }
+      } else { this.holding = false; this.breath = Math.min(1, this.breath + dt / 5); if (this.gaspLock && this.breath > 0.4) this.gaspLock = false; }
+    } else { this.holding = false; this.gaspLock = false; this.breath = Math.min(1, this.breath + dt / 3); }
+    if (this.inspectMine > 0) this.inspectMine -= dt;
+    if (this.sendT <= 0 && (controllable || inLocker)) {
       this.sendT = 1 / SEND_HZ;
       const lit = this.flashOn && this.battery > 0;
-      const flags = (crouch ? 1 : 0) | (lit ? 2 : 0) | (this.sprinting ? 4 : 0) | (real > 0.5 ? 8 : 0);
+      const flags = (crouch ? 1 : 0) | (lit ? 2 : 0) | (this.sprinting ? 4 : 0) | (real > 0.5 ? 8 : 0) | (this.holding ? 16 : 0);
       this.s.volatile.emit('g:state', [+f.x.toFixed(3), +f.y.toFixed(3), +f.z.toFixed(3), +this.yaw.toFixed(3), +this.pitch.toFixed(3), flags, this.sel]);
     }
     // ---- your own body and hands ----
@@ -959,9 +1011,13 @@ export class Game {
       const fb = MAP.fuseBox; if (!this.obj.power) consider('fusebox', 0, fb.x, fb.y, fb.z - 0.1, 2.7, `Fuse box (${this.obj.fuses}/3)${this.inv.some((i) => i && i.type === 'fuse') ? ' — fit a fuse' : ''}`);
       const sc = MAP.securityConsole; if (!this.obj.security) consider('console', 0, sc.x, sc.y, sc.z, 2.7, this.obj.power ? 'Disarm the gate lock' : 'Security console (no power)');
       for (const r of this.remotes.values()) { const p = this.roster.get(r.id); if (p && p.state === 'downed' && r.visible) consider('revive', r.id, r.cur.x, r.cur.y + 0.3, r.cur.z, 2.5, `Revive ${p.name}`); }
+      for (const L of MAP.lures) {
+        const st = this.lureState[L.id] || { used: false, readyAt: 0 }, left = Math.max(0, st.readyAt - this.time);
+        consider('lure', L.id, L.x, L.y, L.z, 2.6, st.used ? 'The great bell is cracked right through' : left > 0 ? `${LURE_LABEL[L.kind].split(' —')[0]} (ready in ${Math.ceil(left)} s)` : LURE_LABEL[L.kind]);
+      }
     }
     this.target = best;
-    const text = me.hidden >= 0 && me.state === 'alive' ? '<kbd>E</kbd> Climb out' : best ? `<kbd>E</kbd> ${esc(best.label)}` : '';
+    const text = me.hidden >= 0 && me.state === 'alive' ? (this.inspectMine > 0 && !this.holding ? '<b class="urgent">He is checking this locker. HOLD <kbd>SPACE</kbd></b>' : this.holding ? '<b class="urgent">Holding your breath…</b>' : '<kbd>E</kbd> Climb out · hold <kbd>Space</kbd> to hold your breath') : best ? `<kbd>E</kbd> ${esc(best.label)}` : '';
     if (text !== this._prompt) { this._prompt = text; $('prompt').innerHTML = text; }
   }
 
@@ -983,7 +1039,7 @@ export class Game {
   renderInv() {
     $('inv').innerHTML = this.inv.map((it, i) => `<div class="slot${i === this.sel ? ' sel' : ''}"><span class="num">${i + 1}</span>${it ? `<span class="ico">${ITEM_INFO[it.type][1]}</span>${ITEM_INFO[it.type][0]}` : ''}</div>`).join('');
     const cur = this.inv[this.sel];
-    $('itemhint').textContent = cur ? ITEM_HINT[cur.type] || '' : '';
+    $('itemhint').textContent = cur ? (ITEM_HINT[cur.type] || ITEM_INFO[cur.type][0]) + DROP_HINT : '';
   }
   renderNotebook() {
     const o = this.obj;
@@ -1036,6 +1092,10 @@ export class Game {
     else if (me.state === 'dead') { const p = this.roster.get(this.spec); status = `You did not make it<small>${p ? `watching ${esc(p.name)} — click to switch` : 'nobody left to watch'}</small>`; }
     else if (me.state === 'escaped') { const p = this.roster.get(this.spec); status = `You are out<small>${p ? `watching ${esc(p.name)} — click to switch` : ''}</small>`; }
     if (status !== this._status) { this._status = status; $('status').innerHTML = status; }
+    const br = $('bar-breath'), inL = me.hidden >= 0 && me.state === 'alive';
+    br.hidden = !inL; if (inL) { br.querySelector('i').style.width = `${this.breath * 100}%`; br.classList.toggle('low', this.breath < 0.3 || this.gaspLock); }
+    const tb = $('tossbar'), th = this.gHeld !== null ? this.time - this.gHeld : 0;
+    if (th > 0.25 && this.inv[this.sel]) { tb.style.opacity = 1; tb.firstElementChild.style.width = `${Math.min(1, (th - 0.25) / 0.8) * 100}%`; } else tb.style.opacity = 0;
     const rb = $('revivebar');
     if (this.revive) { rb.style.opacity = 1; rb.firstElementChild.style.width = `${clamp(this.revive.t / this.revive.dur, 0, 1) * 100}%`; } else rb.style.opacity = 0;
     const f = this.lastFeet, room = me.state === 'alive' || me.state === 'downed' ? roomNameAt(f.x, f.z) : '';

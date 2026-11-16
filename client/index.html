@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>THE LAST BELL</title>
 <meta name="description" content="THE LAST BELL — an online co-op horror game. Escape the school before the Headmaster finds you.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060506'/%3E%3Cpath d='M16 5c-5 0-7 4-7 9v5l-2 3h18l-2-3v-5c0-5-2-9-7-9z' fill='%23a3120f'/%3E%3Ccircle cx='16' cy='25.5' r='2.2' fill='%23d9d4c7'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#0f1614">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1614'/%3E%3Cpath d='M16 5c-5 0-7 4-7 9v5l-2 3h18l-2-3v-5c0-5-2-9-7-9z' fill='%23c9a24a'/%3E%3Ccircle cx='16' cy='25.5' r='2.2' fill='%23e6e3d6'/%3E%3C/svg%3E">
+<link rel="preload" href="assets/fonts/fell-sc.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/barlow-c-600.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.min.js" } }
@@ -13,7 +16,26 @@
 <script src="config.js"></script>
 </head>
 <body>
+<!-- inline icon set (referenced with <use>) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M12 3c-3.6 0-5.2 2.8-5.2 6.4v3.8L5 16.4h14l-1.8-3.2V9.4C17.2 5.8 15.6 3 12 3z" fill="currentColor"/><circle cx="12" cy="19" r="1.8" fill="currentColor"/></symbol>
+  <symbol id="i-door" viewBox="0 0 24 24"><path d="M6 21V4.5L15 3v18M15 5h3v16M4 21h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12.3" cy="12.5" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="12" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 12h10M17.5 12v3M20.5 12v2.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-torch" viewBox="0 0 24 24"><path d="M4 14l6-6 6 6-4 4zM14 6l4-4M16 8l4-2M12 4l2-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="7.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 21c.6-4.2 3.3-6.5 7-6.5s6.4 2.3 7 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.8 1.8M16.7 16.7l1.8 1.8M5.5 18.5l1.8-1.8M16.7 7.3l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-keys" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M7.5 14h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-exit" viewBox="0 0 24 24"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l-4-4 4-4M6 12h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="9" r="1.3" fill="currentColor"/><circle cx="15" cy="15" r="1.3" fill="currentColor"/><circle cx="15" cy="9" r="1.3" fill="currentColor"/><circle cx="9" cy="15" r="1.3" fill="currentColor"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
 <canvas id="view"></canvas>
+<canvas id="menubg" hidden></canvas>
 <div id="fx-vignette"></div>
 <div id="fx-hurt"></div>
 <div id="fx-grain"></div>
@@ -32,11 +54,13 @@
   <div id="mhud" hidden></div>
   <div id="status"></div>
   <div id="revivebar"><i></i></div>
+  <div id="tossbar"><i></i></div>
   <div id="toasts"></div>
   <div id="teamlist"></div>
   <div id="bars">
-    <div class="bar" id="bar-stamina"><span>STAMINA</span><div><i></i></div></div>
-    <div class="bar" id="bar-battery"><span>TORCH <b id="torch-state">ON</b> <kbd>F</kbd></span><div><i></i></div></div>
+    <div class="bar" id="bar-stamina"><span>Stamina</span><div><i></i></div></div>
+    <div class="bar" id="bar-battery"><span>Torch <b id="torch-state">ON</b> <kbd>F</kbd></span><div><i></i></div></div>
+    <div class="bar" id="bar-breath" hidden><span>Breath <kbd>Space</kbd></span><div><i></i></div></div>
     <div id="health"></div>
   </div>
   <div id="itemhint"></div>
@@ -48,164 +72,200 @@
     <ol id="objectives"></ol>
     <h3>Notes found</h3>
     <div id="notes"><p class="dim">Nothing yet. Notes are shared with everyone when picked up.</p></div>
-    <p class="dim small">Hold TAB to read · He hears running · Crouch (C) to stay quiet · Lockers and tables hide you</p>
+    <p class="dim small">Hold Tab to read. He hears running. Crouch (C) to stay quiet. Lockers, tables, beds and the seat rows hide you.</p>
   </div>
-  <div id="hint">F torch · Q ping · TAB notebook · ENTER chat · ESC menu</div>
+  <div id="hint"></div>
 </div>
 
 <!-- ======================= SCREENS ======================= -->
 <div id="screens">
   <section id="s-menu" class="screen">
-    <div class="title-wrap">
-      <div class="kicker">an online co-op horror game</div>
-      <h1 class="title">THE LAST BELL</h1>
-      <div class="tagline">Class was never dismissed.</div>
+    <div class="menu-col">
+      <header class="title-wrap">
+        <svg class="title-bell" aria-hidden="true"><use href="#i-bell"/></svg>
+        <h1 class="title">The Last Bell</h1>
+        <p class="tagline">Class was never dismissed.</p>
+      </header>
+
+      <div class="menu-card">
+        <label class="namecard">
+          <span class="namecard-label">Your name on the register</span>
+          <input id="name" maxlength="16" placeholder="Student" autocomplete="off" spellcheck="false">
+        </label>
+        <nav class="passes" aria-label="Play">
+          <button id="btn-create" class="pass primary"><svg><use href="#i-door"/></svg><span class="lbl">Create a private lobby<small>Get a code to send your friends</small></span></button>
+          <button id="btn-join" class="pass"><svg><use href="#i-key"/></svg><span class="lbl">Join with a code<small>Six characters from the host</small></span></button>
+          <button id="btn-solo" class="pass"><svg><use href="#i-torch"/></svg><span class="lbl">Practise alone<small>Just you, the dark, and him</small></span></button>
+        </nav>
+        <div class="studs">
+          <button id="btn-character" class="stud"><svg><use href="#i-person"/></svg><span>Character</span></button>
+          <button id="btn-settings" class="stud"><svg><use href="#i-gear"/></svg><span>Settings</span></button>
+          <button id="btn-controls" class="stud"><svg><use href="#i-keys"/></svg><span>Controls</span></button>
+        </div>
+        <div id="conn" class="conn">Connecting to the server…</div>
+        <div id="gpu-warn" class="error small" hidden></div>
+      </div>
+      <p class="foot">For 2 to 8 players. Play with headphones.</p>
     </div>
-    <div class="panel menu">
-      <label class="field">Your name<input id="name" maxlength="16" placeholder="Student" autocomplete="off"></label>
-      <button id="btn-create" class="primary">Create Private Lobby</button>
-      <button id="btn-join">Join Lobby</button>
-      <button id="btn-solo">Play (solo practice)</button>
-      <button id="btn-character">Character</button>
-      <button id="btn-settings">Settings</button>
-      <button id="btn-controls">Controls</button>
-      <div id="conn" class="conn">Connecting to server…</div>
-      <div id="gpu-warn" class="error small" hidden></div>
-    </div>
-    <div class="foot">2–8 players · headphones strongly recommended · build 0.8</div>
   </section>
 
   <section id="s-join" class="screen overlay" hidden>
-    <div class="panel">
-      <h2>Join Lobby</h2>
-      <label class="field">Room code<input id="code" maxlength="6" placeholder="ABC123" autocomplete="off" spellcheck="false"></label>
+    <div class="board narrow">
+      <button class="close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button>
+      <h2>Join a lobby</h2>
+      <p class="dim">Type the six characters the host sent you.</p>
+      <input id="code" maxlength="6" placeholder="ABC123" autocomplete="off" spellcheck="false" aria-label="Room code">
       <div id="join-error" class="error"></div>
-      <div class="row"><button id="btn-join-go" class="primary">Join</button><button data-close>Back</button></div>
+      <div class="row"><button id="btn-join-go" class="btn primary">Join lobby</button><button class="btn ghost" data-close>Back</button></div>
     </div>
   </section>
 
   <section id="s-lobby" class="screen" hidden>
-    <div class="panel wide">
-      <div class="lobby-head">
-        <div><div class="dim small">ROOM CODE</div><div id="lobby-code" class="code">······</div></div>
-        <div class="col"><button id="btn-copy-link" class="primary">Copy Invite Link</button><button id="btn-copy-code">Copy Code</button></div>
+    <div class="lobby">
+      <div class="lobby-top">
+        <div class="plaque" title="Room code">
+          <span class="plaque-label">Room</span>
+          <span id="lobby-code" class="code">······</span>
+        </div>
+        <div class="share">
+          <button id="btn-copy-link" class="btn primary"><svg><use href="#i-link"/></svg><span class="lbl">Copy invite link</span></button>
+          <button id="btn-copy-code" class="btn"><svg><use href="#i-copy"/></svg><span class="lbl">Copy code</span></button>
+        </div>
       </div>
-      <div class="lobby-body">
-        <div>
-          <h3>Students <span id="lobby-count" class="dim"></span></h3>
+
+      <div class="lobby-grid">
+        <section class="board register">
+          <h3>Register <span id="lobby-count" class="dim"></span></h3>
           <ul id="lobby-players"></ul>
+          <div class="lobby-chat">
+            <div id="lobby-chatlog"></div>
+            <input id="lobby-chatinput" maxlength="160" placeholder="Message the lobby and press Enter">
+          </div>
+        </section>
+
+        <section class="board rules">
           <h3>Game mode</h3>
           <div class="modes">
-            <label class="mode on" data-mode="coop"><input type="radio" name="mode" value="coop" checked> <b>Escape (co-op)</b><span>Everyone against the Headmaster.</span></label>
-            <label class="mode" data-mode="hunt"><input type="radio" name="mode" value="hunt"> <b>Hunt Mode</b><span>A random player is the Headmaster; everyone else must escape. Needs 2+ players.</span></label>
+            <label class="mode on" data-mode="coop"><input type="radio" name="mode" value="coop" checked><b>Escape</b><span>Everyone works together against the Headmaster.</span></label>
+            <label class="mode" data-mode="hunt"><input type="radio" name="mode" value="hunt"><b>Hunt</b><span>One of you is the Headmaster. Needs at least 2 players.</span></label>
           </div>
           <h3>Difficulty <span id="diff-note" class="dim"></span></h3>
-          <div id="difficulties" class="modes"></div>
-        </div>
-        <div class="lobby-chat">
-          <h3>Lobby chat</h3>
-          <div id="lobby-chatlog"></div>
-          <input id="lobby-chatinput" maxlength="160" placeholder="Type and press Enter">
-        </div>
+          <div id="difficulties"></div>
+        </section>
       </div>
-      <div id="lobby-note" class="dim small"></div>
-      <div id="voice-note" class="dim small"></div>
-      <div id="lobby-error" class="error"></div>
-      <div class="row">
-        <button id="btn-ready">Ready</button>
-        <button id="btn-start" class="primary" hidden>Start Match</button>
-        <button id="btn-voice">Enable Voice Chat</button>
-        <button id="btn-lobby-character">Edit Character</button>
-        <button id="btn-leave">Leave</button>
+
+      <div class="lobby-bar">
+        <div class="notes">
+          <div id="lobby-note" class="dim small"></div>
+          <div id="voice-note" class="dim small"></div>
+          <div id="lobby-error" class="error"></div>
+        </div>
+        <div class="actions">
+          <button id="btn-leave" class="btn ghost"><svg><use href="#i-exit"/></svg><span class="lbl">Leave</span></button>
+          <button id="btn-lobby-character" class="btn"><svg><use href="#i-person"/></svg><span class="lbl">Character</span></button>
+          <button id="btn-voice" class="btn"><svg><use href="#i-mic"/></svg><span class="lbl">Turn on voice chat</span></button>
+          <button id="btn-ready" class="btn big"><span class="lbl">Ready up</span></button>
+          <button id="btn-start" class="btn big primary" hidden><svg><use href="#i-bell"/></svg><span class="lbl">Start the match</span></button>
+        </div>
       </div>
     </div>
   </section>
 
   <section id="s-character" class="screen overlay" hidden>
-    <div class="panel wide">
+    <div class="board wide">
+      <button class="close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button>
       <h2>Character</h2>
       <div class="char-body">
         <canvas id="char-canvas" width="300" height="420"></canvas>
         <div id="char-options"></div>
       </div>
-      <p class="dim small">This is how the other players see you, and what you see when you look down at yourself.</p>
-      <div class="row"><button id="btn-char-random">Randomise</button><button data-close class="primary">Done</button></div>
+      <p class="dim small">Other players see you like this. You also see your own body when you look down.</p>
+      <div class="row"><button id="btn-char-random" class="btn"><svg><use href="#i-dice"/></svg><span class="lbl">Randomise</span></button><button data-close class="btn primary">Done</button></div>
     </div>
   </section>
 
   <section id="s-settings" class="screen overlay" hidden>
-    <div class="panel">
+    <div class="board">
+      <button class="close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button>
       <h2>Settings</h2>
-      <label class="field">Mouse sensitivity <input id="set-sens" type="range" min="0.3" max="3" step="0.05"></label>
-      <label class="field">Master volume <input id="set-vol" type="range" min="0" max="1" step="0.02"></label>
-      <label class="field">Field of view <input id="set-fov" type="range" min="60" max="100" step="1"></label>
-      <label class="field">Brightness <input id="set-bright" type="range" min="0.6" max="1.8" step="0.05"></label>
-      <label class="field">Graphics
-        <select id="set-quality"><option value="low">Low (no shadows, fewer lights)</option><option value="medium">Medium</option><option value="high">High</option></select>
+      <div class="sliders">
+        <label class="slider">Mouse sensitivity<input id="set-sens" type="range" min="0.3" max="3" step="0.05"></label>
+        <label class="slider">Volume<input id="set-vol" type="range" min="0" max="1" step="0.02"></label>
+        <label class="slider">Field of view<input id="set-fov" type="range" min="60" max="100" step="1"></label>
+        <label class="slider">Brightness<input id="set-bright" type="range" min="0.6" max="1.8" step="0.05"></label>
+      </div>
+      <label class="select">Graphics
+        <select id="set-quality"><option value="low">Low: no shadows, fewer lights</option><option value="medium">Medium</option><option value="high">High</option></select>
       </label>
-      <label class="check"><input id="set-dynres" type="checkbox"> Keep it smooth: lower the render resolution automatically when the frame rate drops</label>
-      <label class="check"><input id="set-showfps" type="checkbox"> Show frame rate</label>
-      <label class="check"><input id="set-togglecrouch" type="checkbox"> Crouch is a toggle (press once) instead of hold</label>
-      <label class="check"><input id="set-tips" type="checkbox"> Show control tips at the start of a match</label>
-      <label class="check"><input id="set-ptt" type="checkbox"> Voice chat: push-to-talk (hold V) instead of an open microphone</label>
-      <label class="check"><input id="set-jumpscares" type="checkbox"> Jumpscares: a sudden face, a loud scream and a brief flash when he gets you</label>
-      <p class="dim small">Graphics quality applies from the next match (anti-aliasing after reloading the page). Everything else applies immediately. If the game still stutters on High, use Medium: it looks close and costs far less.</p>
-      <div class="row"><button id="btn-fullscreen">Toggle Fullscreen</button><button data-close class="primary">Done</button></div>
+      <div class="toggles">
+        <label class="toggle"><input id="set-dynres" type="checkbox"><span>Lower the resolution automatically when the frame rate drops</span></label>
+        <label class="toggle"><input id="set-showfps" type="checkbox"><span>Show frame rate</span></label>
+        <label class="toggle"><input id="set-togglecrouch" type="checkbox"><span>Press crouch once instead of holding it</span></label>
+        <label class="toggle"><input id="set-tips" type="checkbox"><span>Show control tips at the start of a match</span></label>
+        <label class="toggle"><input id="set-ptt" type="checkbox"><span>Voice chat: hold V to talk instead of an open microphone</span></label>
+        <label class="toggle"><input id="set-jumpscares" type="checkbox"><span>Jumpscares: a sudden face, a scream and a brief flash when he gets you</span></label>
+      </div>
+      <p class="dim small">Graphics quality applies from the next match. Everything else applies straight away. If High stutters, Medium looks close and costs far less.</p>
+      <div class="row"><button id="btn-fullscreen" class="btn"><svg><use href="#i-expand"/></svg><span class="lbl">Fullscreen</span></button><button data-close class="btn primary">Done</button></div>
     </div>
   </section>
 
   <section id="s-controls" class="screen overlay" hidden>
-    <div class="panel">
+    <div class="board wide">
+      <button class="close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button>
       <h2>Controls</h2>
-      <table class="keys">
-        <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>Move</td></tr>
-        <tr><td>Mouse</td><td>Look</td></tr>
-        <tr><td><kbd>Shift</kbd></td><td>Sprint (uses stamina — and he hears it)</td></tr>
-        <tr><td><kbd>Ctrl</kbd> or <kbd>C</kbd></td><td>Crouch (quiet, harder to see, fits under tables)</td></tr>
-        <tr><td><kbd>E</kbd></td><td>Interact: doors, items, lockers, revive</td></tr>
-        <tr><td><kbd>F</kbd> or right click</td><td>Flashlight on / off</td></tr>
-        <tr><td><kbd>Q</kbd> or middle click</td><td>Ping what you are looking at for your team (when downed: call for help)</td></tr>
-        <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>Select inventory slot</td></tr>
-        <tr><td>Left click</td><td>Use held item</td></tr>
-        <tr><td><kbd>G</kbd></td><td>Drop held item (this is how you share)</td></tr>
-        <tr><td><kbd>Tab</kbd></td><td>Notebook: objectives and notes</td></tr>
-        <tr><td><kbd>M</kbd> / <kbd>V</kbd></td><td>Voice chat: mute or unmute / push-to-talk (if enabled in Settings)</td></tr>
-        <tr><td><kbd>Enter</kbd></td><td>Text chat</td></tr>
-        <tr><td><kbd>Esc</kbd></td><td>Release mouse / menu</td></tr>
-      </table>
-      <p class="dim small"><b>As the Headmaster (Hunt Mode):</b> left click attacks, hold <kbd>Shift</kbd> to rage, <kbd>R</kbd> teleports, <kbd>T</kbd> sets a trap, <kbd>Q</kbd> kills the lights, <kbd>E</kbd> forces doors and rips open lockers.</p>
-      <p class="dim small"><b>Careful:</b> browsers reserve <kbd>Ctrl</kbd>+<kbd>W</kbd> for "close tab". Crouch with <kbd>C</kbd>, or play in fullscreen (Settings), where the game can lock those keys in Chrome and Edge.</p>
-      <div class="row"><button data-close class="primary">Done</button></div>
+      <div class="controls-grid">
+        <table class="keys">
+          <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>Move (walking backwards is slower)</td></tr>
+          <tr><td><kbd>Shift</kbd></td><td>Sprint. Uses stamina, and he hears it</td></tr>
+          <tr><td><kbd>C</kbd> or <kbd>Ctrl</kbd></td><td>Crouch: quiet, harder to see, fits under tables and beds</td></tr>
+          <tr><td><kbd>E</kbd></td><td>Doors, items, lockers, the piano, revive</td></tr>
+          <tr><td><kbd>F</kbd> or right click</td><td>Torch on or off</td></tr>
+          <tr><td>Left click</td><td>Use what you are holding</td></tr>
+          <tr><td><kbd>1</kbd>–<kbd>4</kbd> or wheel</td><td>Choose an inventory slot</td></tr>
+        </table>
+        <table class="keys">
+          <tr><td><kbd>G</kbd></td><td>Tap to drop what you hold. Hold, then let go, to toss it to a teammate</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>In a locker: hold your breath while he checks it</td></tr>
+          <tr><td><kbd>Q</kbd> or middle click</td><td>Ping what you look at. When you are down, call for help</td></tr>
+          <tr><td><kbd>Tab</kbd></td><td>Notebook: objectives and notes</td></tr>
+          <tr><td><kbd>M</kbd> / <kbd>V</kbd></td><td>Mute your microphone / push to talk</td></tr>
+          <tr><td><kbd>Enter</kbd></td><td>Text chat</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Release the mouse</td></tr>
+        </table>
+      </div>
+      <p class="dim small"><b>As the Headmaster in Hunt:</b> left click attacks, hold <kbd>Shift</kbd> to rage, <kbd>R</kbd> teleports, <kbd>T</kbd> sets a trap, <kbd>Q</kbd> kills the lights, <kbd>E</kbd> forces doors and rips open lockers.</p>
+      <p class="dim small">Browsers keep <kbd>Ctrl</kbd>+<kbd>W</kbd> for closing the tab. Crouch with <kbd>C</kbd>, or play in fullscreen from Settings.</p>
+      <div class="row"><button data-close class="btn primary">Done</button></div>
     </div>
   </section>
 
   <section id="s-loading" class="screen" hidden>
     <div class="loading">
-      <h2 class="title small-title">THE LAST BELL</h2>
+      <svg class="loading-bell" aria-hidden="true"><use href="#i-bell"/></svg>
       <div id="loading-text">Unlocking the front doors…</div>
       <div class="loadbar"><i id="loading-bar"></i></div>
-      <p class="dim" id="loading-tip"></p>
+      <p class="loading-tip" id="loading-tip"></p>
     </div>
   </section>
 
   <section id="s-pause" class="screen overlay" hidden>
-    <div class="panel">
-      <h2>Paused?</h2>
-      <p class="dim">The school does not pause. Click to go back in.</p>
-      <button id="btn-resume" class="primary">Resume</button>
-      <button id="btn-pause-settings">Settings</button>
-      <button id="btn-pause-controls">Controls</button>
-      <button id="btn-quit">Leave Match</button>
+    <div class="board narrow">
+      <h2>The school does not pause</h2>
+      <p class="dim">He is still out there. Click resume to go back in.</p>
+      <button id="btn-resume" class="btn big primary">Resume</button>
+      <div class="row"><button id="btn-pause-settings" class="btn"><svg><use href="#i-gear"/></svg><span class="lbl">Settings</span></button><button id="btn-pause-controls" class="btn"><svg><use href="#i-keys"/></svg><span class="lbl">Controls</span></button></div>
+      <button id="btn-quit" class="btn ghost"><svg><use href="#i-exit"/></svg><span class="lbl">Leave the match</span></button>
     </div>
   </section>
 
   <section id="s-end" class="screen overlay" hidden>
-    <div class="panel wide">
-      <h1 id="end-title" class="title small-title">ESCAPED</h1>
-      <div id="end-sub" class="tagline"></div>
+    <div class="board wide end">
+      <h1 id="end-title" class="end-title">Escaped</h1>
+      <div id="end-sub" class="end-sub"></div>
       <table id="end-table" class="summary"></table>
       <div id="end-note" class="dim small"></div>
-      <div class="row"><button id="btn-rematch" class="primary" hidden>Back to Lobby (Rematch)</button><button id="btn-end-leave">Leave</button></div>
+      <div class="row"><button id="btn-rematch" class="btn big primary" hidden>Back to the lobby</button><button id="btn-end-leave" class="btn ghost"><svg><use href="#i-exit"/></svg><span class="lbl">Leave</span></button></div>
     </div>
   </section>
 </div>

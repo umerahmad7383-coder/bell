@@ -226,7 +226,106 @@ export function buildTextures() {
     for (let i = 0; i < 9; i++) { const x = R(30, 98), y = R(30, 98), r = R(8, 30); const g = c.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, 'rgba(38,4,4,0.85)'); g.addColorStop(0.7, 'rgba(30,3,3,0.6)'); g.addColorStop(1, 'rgba(30,3,3,0)'); c.fillStyle = g; c.fillRect(0, 0, w, h); }
   }, false);
 
+  // ---------------------------------------------------------------- South Wing (v0.9)
+  // small white wall/floor tiles, grimy grout
+  T.tile = make(256, 256, (c, w, h) => {
+    c.fillStyle = '#5e605a'; c.fillRect(0, 0, w, h);
+    const n = 8, s = w / n;
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const v = 150 + R(-18, 12);
+      c.fillStyle = `rgb(${v},${v + 2},${v - 6})`; c.fillRect(x * s + 1.5, y * s + 1.5, s - 3, s - 3);
+      if (Math.random() < 0.06) { c.strokeStyle = 'rgba(0,0,0,0.5)'; c.beginPath(); c.moveTo(x * s + R(0, s), y * s); c.lineTo(x * s + R(0, s), y * s + s); c.stroke(); } // cracked
+    }
+    stains(c, w, h, 16, '40,32,18', 0.35, 60); speckle(c, w, h, 2500, 0.25, 0.08);
+  });
+  // heavy stage curtain: red velvet folds
+  T.curtain = make(256, 256, (c, w, h) => {
+    for (let x = 0; x < w; x++) { const f = 0.55 + 0.45 * Math.sin(x / w * Math.PI * 10); c.fillStyle = `rgb(${Math.round(70 + 60 * f)},${Math.round(8 + 10 * f)},${Math.round(12 + 10 * f)})`; c.fillRect(x, 0, 1, h); }
+    const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, 'rgba(0,0,0,0.55)'); g.addColorStop(0.3, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.4)');
+    c.fillStyle = g; c.fillRect(0, 0, w, h);
+    stains(c, w, h, 10, '10,0,0', 0.4, 50); speckle(c, w, h, 1500, 0.3, 0.03);
+  });
+  // corridor posters / notices (several on one atlas, picked by UV offset)
+  T.posters = make(512, 256, (c, w, h) => {
+    const pw = w / 4;
+    const drawPoster = (i, bg, title, lines, accent) => {
+      const x0 = i * pw + 10, y0 = 12, pw2 = pw - 20, ph = h - 24;
+      c.fillStyle = bg; c.fillRect(x0, y0, pw2, ph);
+      c.fillStyle = accent; c.fillRect(x0, y0, pw2, 30);
+      c.fillStyle = '#f4efe0'; c.font = 'bold 15px Georgia, serif'; c.textAlign = 'center'; c.fillText(title, x0 + pw2 / 2, y0 + 21);
+      c.fillStyle = 'rgba(30,24,16,0.85)'; c.font = '11px Georgia, serif';
+      lines.forEach((ln, k) => c.fillText(ln, x0 + pw2 / 2, y0 + 56 + k * 17));
+      stains(c, w, h, 0); c.save(); c.globalAlpha = 0.4; c.fillStyle = '#3a2a14'; c.fillRect(x0 + R(0, pw2 - 30), y0 + R(60, ph - 40), R(10, 30), R(10, 40)); c.restore();
+      c.fillStyle = '#8a8a86'; c.beginPath(); c.arc(x0 + pw2 / 2, y0 + 4, 3, 0, 6.28); c.fill(); // pin
+      if (i === 2) { c.strokeStyle = '#2a0202'; c.lineWidth = 4; c.beginPath(); c.moveTo(x0 + 10, y0 + 40); c.lineTo(x0 + pw2 - 10, y0 + ph - 20); c.moveTo(x0 + pw2 - 10, y0 + 40); c.lineTo(x0 + 10, y0 + ph - 20); c.stroke(); }
+    };
+    drawPoster(0, '#d8cfb4', 'SCHOOL PLAY', ['"The Last Bell"', 'Friday 7 pm', 'Auditorium', '', 'All pupils attend.', 'No exceptions.'], '#6a1a14');
+    drawPoster(1, '#c9d2c0', 'RULES', ['1. Walk, never run', '2. Silence in halls', '3. Stay in your seat', '4. Obey the bell', '5. Never be late', '6. Never leave'], '#24402e');
+    drawPoster(2, '#d6c9a8', 'MISSING', ['Have you seen', 'THOMAS PETERS', 'Year 4', '', 'Last seen in', 'the locker room'], '#2b2b30');
+    drawPoster(3, '#cdbfa2', 'CHOIR', ['Practice daily', 'Music Room', '', '"He likes to hear', 'you sing."', ''], '#3a2a5a');
+  }, false);
+  T.clock = make(128, 128, (c, w, h) => {
+    c.fillStyle = '#1b1b1a'; c.beginPath(); c.arc(64, 64, 62, 0, 6.28); c.fill();
+    c.fillStyle = '#d9d3bf'; c.beginPath(); c.arc(64, 64, 55, 0, 6.28); c.fill();
+    c.fillStyle = '#222'; for (let i = 0; i < 12; i++) { const a = i / 12 * 6.283; c.fillRect(64 + Math.sin(a) * 46 - 2, 64 - Math.cos(a) * 46 - 2, 4, 4); }
+    c.strokeStyle = '#111'; c.lineCap = 'round';
+    const hand = (a, len, wd) => { c.lineWidth = wd; c.beginPath(); c.moveTo(64, 64); c.lineTo(64 + Math.sin(a) * len, 64 - Math.cos(a) * len); c.stroke(); };
+    hand((3 + 15 / 60) / 12 * 6.283, 28, 5); hand(15 / 60 * 6.283, 42, 3); // stopped at 3:15
+    c.strokeStyle = 'rgba(255,255,255,0.25)'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(30, 30); c.lineTo(80, 92); c.stroke(); // cracked glass
+    stains(c, w, h, 6, '40,30,10', 0.35, 30);
+  }, false);
+  // loose papers on the floor
+  T.paper = make(64, 64, (c, w, h) => {
+    c.fillStyle = '#cfc8b2'; c.fillRect(4, 4, w - 8, h - 8);
+    c.fillStyle = 'rgba(40,40,60,0.45)'; for (let i = 0; i < 9; i++) c.fillRect(10, 12 + i * 5, R(20, 42), 1.2);
+    stains(c, w, h, 4, '60,40,10', 0.4, 20);
+  }, false);
+  T.web = make(128, 128, (c, w, h) => {
+    c.strokeStyle = 'rgba(220,220,210,0.55)'; c.lineWidth = 1;
+    for (let i = 0; i <= 8; i++) { const a = (i / 8) * (Math.PI / 2); c.beginPath(); c.moveTo(0, 0); c.lineTo(Math.cos(a) * 128, Math.sin(a) * 128); c.stroke(); }
+    for (let r = 14; r < 128; r += R(10, 18)) { c.beginPath(); for (let i = 0; i <= 8; i++) { const a = (i / 8) * (Math.PI / 2), rr = r * R(0.9, 1.05); const x = Math.cos(a) * rr, y = Math.sin(a) * rr; if (!i) c.moveTo(x, y); else c.quadraticCurveTo(Math.cos(a - 0.1) * rr * 0.92, Math.sin(a - 0.1) * rr * 0.92, x, y); } c.stroke(); }
+  }, false);
+  // paintings on the art room walls: children's drawings of HIM
+  T.art = make(256, 128, (c, w, h) => {
+    for (let k = 0; k < 2; k++) {
+      const x0 = k * 128 + 8; c.fillStyle = '#e3dccb'; c.fillRect(x0, 8, 112, 112);
+      c.fillStyle = '#3d6a2a'; c.fillRect(x0, 100, 112, 20);
+      c.fillStyle = '#111'; c.fillRect(x0 + 46 + k * 10, 34, 16, 66); c.beginPath(); c.arc(x0 + 54 + k * 10, 30, 10, 0, 6.28); c.fill(); // tall black figure
+      c.fillStyle = '#c21010'; c.fillRect(x0 + 49 + k * 10, 27, 3, 3); c.fillRect(x0 + 56 + k * 10, 27, 3, 3); // red eyes
+      c.fillStyle = '#e8b04a'; c.beginPath(); c.arc(x0 + 18, 22, 9, 0, 6.28); c.fill();
+      c.fillStyle = '#3a5ac2'; c.fillRect(x0 + 20, 70, 8, 30); c.fillRect(x0 + 84, 74, 8, 26); // small children
+      c.fillStyle = '#222'; c.font = '11px "Comic Sans MS", cursive'; c.fillText(k ? 'MY TEECHER' : 'HE WATCHES', x0 + 14, 116);
+    }
+  }, false);
+  T.canvas = make(128, 128, (c, w, h) => {
+    c.fillStyle = '#ddd5c2'; c.fillRect(0, 0, w, h);
+    for (let i = 0; i < 26; i++) { c.fillStyle = `hsla(${R(0, 360)},45%,${R(25, 55)}%,0.55)`; c.beginPath(); c.arc(R(10, 118), R(10, 118), R(4, 22), 0, 6.28); c.fill(); }
+    c.fillStyle = '#0c0c0c'; c.fillRect(56, 30, 14, 80); c.beginPath(); c.arc(63, 26, 10, 0, 6.28); c.fill();
+  }, false);
   return T;
+}
+
+/** Engraved brass plaque with a room name (signs above doors). */
+export function signTexture(text) {
+  return make(256, 64, (c, w, h) => {
+    const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#8d7a4c'); g.addColorStop(0.5, '#5e5031'); g.addColorStop(1, '#3d331e');
+    c.fillStyle = g; c.fillRect(0, 0, w, h);
+    c.strokeStyle = 'rgba(0,0,0,0.6)'; c.lineWidth = 4; c.strokeRect(3, 3, w - 6, h - 6);
+    c.fillStyle = '#1d170c'; c.font = `bold ${text.length > 16 ? 22 : 27}px Georgia, "Times New Roman", serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(text.toUpperCase(), w / 2, h / 2 + 2);
+    c.fillStyle = 'rgba(255,240,200,0.18)'; c.fillText(text.toUpperCase(), w / 2 - 1, h / 2 + 1);
+    stains(c, w, h, 8, '20,30,10', 0.4, 30);
+  }, false);
+}
+/** Emergency exit sign: works without power. */
+export function exitTexture(dir) {
+  return make(256, 96, (c, w, h) => {
+    c.fillStyle = '#0b3a1c'; c.fillRect(0, 0, w, h);
+    c.fillStyle = '#4dff8a'; c.font = 'bold 54px system-ui, Arial, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('EXIT', w / 2 - (dir ? 22 * dir : 0), h / 2 + 2);
+    if (dir) { c.beginPath(); const ax = dir < 0 ? 22 : w - 22; c.moveTo(ax, h / 2); c.lineTo(ax - dir * 30, h / 2 - 22); c.lineTo(ax - dir * 30, h / 2 + 22); c.fill(); }
+    c.strokeStyle = '#4dff8a'; c.lineWidth = 3; c.strokeRect(5, 5, w - 10, h - 10);
+  }, false);
 }
 
 /** Scrawled wall writing on a transparent background. */

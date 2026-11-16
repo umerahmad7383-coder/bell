@@ -13,6 +13,9 @@ const SPEED = Math.max(0.5, Math.min(1.5, Number(process.env.MONSTER_SPEED) || 1
 const GRACE = process.env.MONSTER_GRACE !== undefined && process.env.MONSTER_GRACE !== '' ? Number(process.env.MONSTER_GRACE) : null;
 
 export const MSTATE = { patrol: 0, investigate: 1, search: 2, chase: 3, attack: 4, retreat: 5, stalk: 6 };
+const ATTACK_START = 1.75; // he starts swinging this close...
+const ATTACK_REACH = 2.15; // ...and the swing connects with anyone still this close when it lands
+const LUNGE = 0.95;        // fraction of his chase speed he keeps while the swing winds up
 
 // free cells next to a table: where he stands to look underneath it
 const COVER_SPOTS = [];
@@ -139,6 +142,7 @@ export class Monster {
         let range = (8 + (flash ? 7 : 0) + (this.g.obj.power ? 3 : 0) + (sprint ? 2 : 0) + this.aggr * 0.5) * D.vision;
         if (crouch) range *= 0.6;
         if (crouch && MAP.cover[idx(Math.floor(p.x), Math.floor(p.z))]) range *= 0.3;
+        else if (crouch && MAP.shade[idx(Math.floor(p.x), Math.floor(p.z))]) range *= 0.45; // between seat rows, behind a drape
         const ang = Math.abs(angDiff(Math.atan2(p.x - this.x, p.z - this.z), this.ry));
         const inFov = ang < 1.05 || d < (crouch ? 1.3 : 2.4);
         if (d < range && inFov) seen = true;
@@ -251,7 +255,7 @@ export class Monster {
       // [smart 1] drifts toward whatever the players have to do next
       const near = cands.filter((w) => dist(w.x, w.z, hs.x, hs.z) < 12);
       if (near.length) cands = near;
-    } else if (alive.length && roll > 1 - (0.25 + 0.1 * this.aggr)) {
+    } else if (alive.length && roll > 1 - (0.3 + 0.1 * this.aggr)) { // (a bigger school since v0.9: he drifts toward people a bit more)
       const p = pick(alive);
       const near = cands.filter((w) => dist(w.x, w.z, p.x, p.z) < 16);
       if (near.length) cands = near;
@@ -356,6 +360,7 @@ export class Monster {
             if (this.inspect.t <= 0) {
               const occ = [...g.players.values()].find((p) => p.hidden === L.id && p.state === 'alive');
               this.inspect = null;
+              if (occ && this.holdsBreath(occ, L)) { occ.stats.breath++; g.emit({ e: 'lockerpass', id: L.id }); g.emitTo(occ, { e: 'msg', text: 'He listens... and moves on. Breathe. Quietly.', kind: 'good' }); break; }
               if (occ) { g.pullFromLocker(occ); g.hitPlayer(occ); this.afterHit(); break; }
             }
           }
@@ -439,7 +444,7 @@ export class Monster {
           this.startSearch(guess.x, guess.z); break;
         }
         if (seen && seen !== p && dist(this.x, this.z, seen.x, seen.z) < d - 3) { this.startChase(seen); break; }
-        if (sees && d < 1.55) { this.timer = 0.55; this.setState('attack'); break; }
+        if (sees && d < ATTACK_START) { this.startAttack(); break; }
 
         // [smart 2] a chase that is not closing turns into an interception
         this.chaseT += dt; this.chaseCheck += dt;
@@ -464,9 +469,19 @@ export class Monster {
       case 'attack': {
         const p = g.players.get(this.targetId);
         if (p) this.face(p.x, p.z, dt, 14);
+        // He does NOT stand still while the swing winds up: he lunges after you. (Standing still was
+        // the bug that let anyone dodge every swing just by walking backwards.)
+        if (p && p.state === 'alive' && p.hidden < 0) {
+          const d = dist(this.x, this.z, p.x, p.z);
+          if (d > 0.95) {
+            this.repathT -= dt;
+            if (this.repathT <= 0 || !this.path.length) { this.pathTo(p.x, p.z); this.repathT = 0.15; }
+            this.move(dt, speedChase * LUNGE);
+          }
+        }
         this.timer -= dt;
         if (this.timer <= 0) {
-          if (p && p.state === 'alive' && p.hidden < 0 && dist(this.x, this.z, p.x, p.z) < 2.2 && this.canSee(p)) {
+          if (p && p.state === 'alive' && p.hidden < 0 && dist(this.x, this.z, p.x, p.z) < ATTACK_REACH && this.canSee(p)) {
             g.hitPlayer(p);
             this.afterHit();
           } else if (p && p.state === 'alive') { this.lostT = 0; this.repathT = 0; this.setState('chase'); }
@@ -491,6 +506,18 @@ export class Monster {
         break;
       }
     }
+  }
+
+  /** A player holding their breath in the locker he is checking may get away with it (never if he watched them get in). */
+  holdsBreath(p, L) {
+    if (!(p.flags & 16) || this.sawHide === p.id) return false;
+    const learned = this.smart >= 2 ? Math.max(0, (this.lockerUses.get(L.id) || 0) - 1) * 0.08 : 0;
+    return Math.random() < Math.max(0.1, (this.D.breath ?? 0.6) - learned);
+  }
+
+  startAttack() {
+    this.timer = this.D.windup ?? 0.52; this.repathT = 0;
+    this.setState('attack');
   }
 
   afterHit() { this.startRetreat(Math.max(2, this.D.retreat - 0.6 * this.aggr)); }

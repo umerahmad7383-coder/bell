@@ -3,14 +3,17 @@
 // (monster pathfinding, line of sight, validation). 1 grid cell = 1 metre.
 
 export const W = 63;
-export const H = 48;
+export const H = 61;
 export const WALL = 0, FLOOR = 1, DOOR = 2;
 export const CEIL_Y = 3.2;          // ground-floor ceiling height
+export const STAGE_Y = 0.3;         // the auditorium stage is a step up (level 3)
 export const BASEMENT_Y = -3;       // basement floor height
 export const BASEMENT_CEIL = -0.35; // basement ceiling height
 export const STAIRS = { x0: 51, x1: 57, z0: 30, z1: 32 }; // x1/z1 exclusive, descends toward +x
 
 const R = (name, x0, z0, x1, z1, o = {}) => ({ name, x0, z0, x1, z1, ...o });
+/** floor height of a map level */
+export const levelY = (lv) => (lv === 2 ? BASEMENT_Y : lv === 3 ? STAGE_Y : 0);
 
 export const ROOMS = [
   R('Courtyard', 1, 19, 3, 25, { outside: true }),
@@ -37,6 +40,17 @@ export const ROOMS = [
   R('Basement', 57, 28, 60, 36, { basement: true }),
   R('Cellar', 57, 20, 61, 26, { basement: true }),
   R('Boiler Room', 50, 38, 60, 45, { basement: true }),
+  // ---- South Wing (v0.9) ----
+  R('West Wing', 14, 41, 15, 58, { corridor: true }),
+  R('East Wing', 46, 41, 47, 58, { corridor: true }),
+  R('Lower Hall', 14, 57, 47, 58, { corridor: true }),
+  R('Auditorium', 17, 42, 31, 51),
+  R('Stage', 17, 52, 31, 55, { stage: true }),
+  R('Music Room', 33, 42, 44, 48),
+  R("Nurse's Office", 33, 50, 44, 55),
+  R('Art Room', 5, 42, 12, 49),
+  R("Janitor's Closet", 8, 51, 12, 55),
+  R('Locker Room', 49, 48, 60, 55),
 ];
 
 // [x, z, options]
@@ -46,15 +60,18 @@ const DOOR_DEFS = [
   [48, 15, { locked: true, lock: 'principal' }],
   [48, 22], [48, 31], [59, 27, { basement: true }], [58, 37, { basement: true }],
   [42, 10, { kind: 'shelf' }],
+  // South Wing
+  [13, 45], [13, 53], [16, 46], [32, 44], [45, 45], [45, 52], [38, 56], [24, 56], [48, 51],
 ];
 const OPENINGS = [[22, 24], [23, 24], [38, 24], [39, 24]];
 const GATE_CELLS = [[4, 21], [4, 22], [4, 23]];
 
 function build() {
   const grid = new Uint8Array(W * H);
-  const level = new Uint8Array(W * H);   // 0 ground, 1 stairs, 2 basement
+  const level = new Uint8Array(W * H);   // 0 ground, 1 stairs, 2 basement, 3 stage
   const blocked = new Uint8Array(W * H); // furniture: blocks pathing, not sight
   const cover = new Uint8Array(W * H);   // crouch here = concealed (under a table)
+  const shade = new Uint8Array(W * H);   // crouch here = harder to see (between seat rows, behind a drape)
   const roomOf = new Int8Array(W * H).fill(-1);
   const I = (x, z) => z * W + x;
 
@@ -64,6 +81,7 @@ function build() {
       if (roomOf[I(x, z)] < 0 || !r.corridor) roomOf[I(x, z)] = ri;
       if (r.basement) level[I(x, z)] = 2;
       if (r.stairs) level[I(x, z)] = 1;
+      if (r.stage) level[I(x, z)] = 3;
     }
   });
   for (const [x, z] of OPENINGS) grid[I(x, z)] = FLOOR;
@@ -86,12 +104,13 @@ function build() {
   // t: type, (x,z): min cell, w/d: footprint in cells, r: rotation (quarter turns, visual)
   const P = (t, x, z, w = 1, d = 1, o = {}) => {
     const lv = level[I(x, z)];
-    const p = { t, x: x + w / 2, z: z + d / 2, w, d, r: 0, y: lv === 2 ? BASEMENT_Y : 0, ...o };
+    const p = { t, x: x + w / 2, z: z + d / 2, w, d, r: 0, y: levelY(lv), ...o };
     props.push(p);
     if (!o.walk) for (let zz = z; zz < z + d; zz++) for (let xx = x; xx < x + w; xx++) {
       blocked[I(xx, zz)] = 1;
       if (o.cover) cover[I(xx, zz)] = 1;
     }
+    if (o.shade) for (let zz = z; zz < z + d; zz++) for (let xx = x; xx < x + w; xx++) shade[I(xx, zz)] = 1;
     return p;
   };
   const table = (x, z, w, d, o = {}) => P('table', x, z, w, d, { cover: true, ...o });
@@ -149,6 +168,50 @@ function build() {
   P('crate', 50, 45, 2, 1);
   P('pipes', 50, 38, 11, 1, { walk: true });
 
+  // ---- South Wing furniture ----
+  // Auditorium: three rows of seats facing the stage. Crouch between the rows and he sees you far later.
+  for (const z of [44, 46, 48]) { P('seats', 18, z, 5, 1); P('seats', 26, z, 5, 1); }
+  for (const z of [43, 45, 47, 49]) { P('gap', 18, z, 5, 1, { walk: true, shade: true }); P('gap', 26, z, 5, 1, { walk: true, shade: true }); }
+  // Stage: lectern, the great bell, curtains (crouch behind the side drapes to hide)
+  P('lectern', 24, 53, 1, 1, { face: 'n' });
+  P('greatbell', 19, 54, 2, 1);
+  P('curtain', 17, 55, 15, 1, { walk: true });
+  P('drape', 17, 52, 1, 3, { walk: true, shade: true, face: 'e' });
+  P('drape', 31, 52, 1, 3, { walk: true, shade: true, face: 'w' });
+  // Music room
+  P('piano', 34, 47, 2, 1, { face: 'n' });
+  P('stands', 37, 44, 5, 1);
+  P('stands', 37, 46, 4, 1);
+  P('drums', 42, 47, 2, 1);
+  P('cabinet', 34, 42, 3, 1, { face: 's' });
+  // Nurse's office: high hospital beds you can crawl under
+  P('bed', 34, 51, 2, 1, { cover: true });
+  P('bed', 34, 53, 2, 1, { cover: true, body: true });
+  P('bed', 41, 54, 2, 1, { cover: true });
+  P('medcab', 40, 50, 3, 1, { face: 's' });
+  table(37, 53, 2, 1, { nurse: true });
+  P('screen', 36, 51, 1, 1);
+  P('iv', 36, 54, 1, 1);
+  // Art room
+  for (const [x, z] of [[6, 44], [9, 44], [6, 47], [9, 47]]) table(x, z, 2, 1, { art: true });
+  P('easel', 11, 43, 1, 1, { face: 'w' });
+  P('easel', 12, 48, 1, 1, { face: 'w' });
+  P('kiln', 5, 42, 1, 1);
+  P('cabinet', 7, 42, 3, 1, { face: 's' });
+  P('mannequin', 12, 46, 1, 1);
+  // Janitor's closet
+  P('cabinet', 8, 51, 1, 4, { face: 'e' });
+  P('crate', 12, 51, 1, 1, { radio: true });
+  P('crate', 11, 55, 1, 1);
+  P('bucket', 10, 55, 1, 1, { walk: true });
+  // Locker room
+  P('bench', 51, 51, 6, 1);
+  P('bench', 51, 53, 6, 1);
+  P('showers', 59, 49, 2, 7, { walk: true });
+  // Lower hall
+  P('trophy', 34, 58, 3, 1, { face: 'n' });
+  P('trophy', 19, 58, 2, 1, { face: 'n' });
+
   // Hide-able lockers: [cellX, cellZ, faceDX, faceDZ]
   const LOCKERS = [
     [8, 21, 0, 1], [9, 21, 0, 1], [10, 21, 0, 1],
@@ -160,16 +223,30 @@ function build() {
     [44, 27, -1, 0], [44, 28, -1, 0],
     [49, 26, 0, -1], [50, 26, 0, -1],
     [60, 33, -1, 0], [60, 34, -1, 0],
+    // South Wing
+    [14, 49, 1, 0], [14, 50, 1, 0],
+    [47, 43, -1, 0], [47, 44, -1, 0],
+    [28, 58, 0, -1], [29, 58, 0, -1],
+    [44, 42, -1, 0], [44, 43, -1, 0],
+    [8, 55, 1, 0],
+    ...[50, 51, 52, 53, 54, 55, 56, 57].map((x) => [x, 48, 0, 1]),
   ];
   const lockers = LOCKERS.map(([x, z, dx, dz], id) => {
     blocked[I(x, z)] = 1;
-    return { id, x, z, dx, dz, y: level[I(x, z)] === 2 ? BASEMENT_Y : 0 };
+    return { id, x, z, dx, dz, y: levelY(level[I(x, z)]) };
   });
 
   // Fixed interactables
   const fuseBox = { x: 57.5, z: 45.9, y: BASEMENT_Y + 1.4, cellX: 57, cellZ: 45 };
   const securityConsole = { x: 55.2, z: 8, y: 1.0, cellX: 54, cellZ: 8 };
   const gateKeySpot = { x: 55, z: 15.5, y: 0.95 };
+  // Lures: things that make a lot of noise to pull him somewhere (E to use).
+  //   r = how far he hears it, delay = seconds before it starts, dur = how long it plays, cd = cooldown (0 = once per match)
+  const lures = [
+    { id: 0, kind: 'piano', name: 'the piano', x: 35, z: 46.6, y: 1.0, r: 34, delay: 0, dur: 4, cd: 45 },
+    { id: 1, kind: 'radio', name: 'the old radio', x: 12.5, z: 51.5, y: 1.02, r: 30, delay: 6, dur: 12, cd: 75 },
+    { id: 2, kind: 'greatbell', name: 'the great bell', x: 20, z: 54.5, y: STAGE_Y + 1.6, r: 90, delay: 0, dur: 6, cd: 0 },
+  ];
 
   // ---------- derived data ----------
   const walk = (x, z) => x >= 0 && z >= 0 && x < W && z < H && grid[I(x, z)] !== WALL;
@@ -188,7 +265,7 @@ function build() {
         if (!walk(nx, nz) || blocked[I(nx, nz)]) nearEdge = true;
         if (walk(nx, nz) && grid[I(nx, nz)] === DOOR) nearDoor = true;
       }
-      if (nearEdge && !nearDoor) spots.push({ x: x + 0.5, z: z + 0.5, y: (r.basement ? BASEMENT_Y : 0) + 0.12, room: r.name });
+      if (nearEdge && !nearDoor) spots.push({ x: x + 0.5, z: z + 0.5, y: levelY(level[I(x, z)]) + 0.12, room: r.name });
     }
   });
   for (const p of props) if (p.t === 'table') {
@@ -221,6 +298,7 @@ function build() {
   ROOMS.forEach((r) => {
     if (r.outside || r.stairs) return;
     const y = (r.basement ? BASEMENT_CEIL : CEIL_Y) - 0.06;
+    if (r.stage) return; // lit from the auditorium
     const lenX = r.x1 - r.x0 + 1, lenZ = r.z1 - r.z0 + 1;
     const nx = Math.max(1, Math.round(lenX / 5)), nz = Math.max(1, Math.round(lenZ / 5));
     for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
@@ -235,15 +313,16 @@ function build() {
   // Windows: [wall cell x, z, normal x, normal z]
   const windows = [
     [4, 10, 1, 0], [4, 13, 1, 0], [4, 16, 1, 0], [4, 27, 1, 0], [4, 34, 1, 0], [4, 37, 1, 0],
-    ...[18, 22, 28, 34, 40, 44].flatMap((x) => [[x, 4, 0, 1], [x, 41, 0, -1]]),
+    ...[18, 22, 28, 34, 40, 44].flatMap((x) => [[x, 4, 0, 1], [x, 59, 0, -1]]),
     [56, 7, -1, 0], [58, 14, -1, 0], [58, 16, -1, 0], [10, 2, 0, 1],
+    [4, 44, 1, 0], [4, 47, 1, 0], [61, 50, -1, 0], [61, 53, -1, 0],
   ].map(([x, z, nx, nz]) => ({ x, z, nx, nz }));
 
   const playerSpawns = [];
   for (let i = 0; i < 8; i++) playerSpawns.push({ x: 6.5 + (i % 4) * 0.9, z: 21.9 + Math.floor(i / 4) * 1.2 });
   const escapeZone = { x0: 0.5, x1: 3.6, z0: 19, z1: 26 };
 
-  return { grid, level, blocked, cover, roomOf, doors, doorAt, gate, props, lockers, fuseBox, securityConsole, gateKeySpot, spots, waypoints, lights, windows, playerSpawns, escapeZone };
+  return { grid, level, blocked, cover, shade, roomOf, doors, doorAt, gate, props, lockers, fuseBox, securityConsole, gateKeySpot, lures, spots, waypoints, lights, windows, playerSpawns, escapeZone };
 }
 
 export const MAP = build();
@@ -257,6 +336,7 @@ export function floorY(x, z) {
   if (!inBounds(cx, cz)) return 0;
   const lv = MAP.level[cz * W + cx];
   if (lv === 2) return BASEMENT_Y;
+  if (lv === 3) return STAGE_Y;
   if (lv === 1) return BASEMENT_Y * Math.min(1, Math.max(0, (x - STAIRS.x0) / (STAIRS.x1 - STAIRS.x0)));
   return 0;
 }

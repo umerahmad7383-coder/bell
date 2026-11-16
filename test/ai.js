@@ -38,6 +38,23 @@ console.log('CHASE / ATTACK / RETREAT');
   run(g, 3000);
   assert(g.over && g.summary && g.summary.win === false, `a lone player who never moves is eventually caught -> defeat (t=${g.summary?.time}s)`);
 }
+console.log('NO DODGING BY WALKING AWAY');
+{
+  // He used to stop dead for the swing's wind-up, so a player walking (even backwards) away was
+  // always out of reach by the time it landed. He now keeps lunging during the wind-up.
+  const caught = (diff, speed, flags) => {
+    const { g } = mk(1, diff); const m = g.monster, p = g.players.get(1);
+    m.x = 18.5; m.z = 22.5; m.ry = Math.PI / 2; p.x = 22.5; p.z = 22.5; p.flags = flags; p.lastT = 0;
+    m.startChase(p);
+    for (let t = 0; t < 7 * 15; t++) { p.x = Math.min(46.3, p.x + speed / 15); p.lastT = g.time; g.tick(1 / 15); if (p.hp < g.maxHp || p.state !== 'alive') return p.x < 46.2; }
+    return false;
+  };
+  for (const d of ['beginner', 'nightmare']) {
+    assert(caught(d, 2.75 * 0.7, 8), `${d}: walking backwards away from him gets you hit`);
+    assert(caught(d, 2.75, 8), `${d}: walking away from him gets you hit`);
+  }
+  assert(!caught('beginner', 5.3, 8 | 4), 'beginner: sprinting still gets away from him');
+}
 console.log('NOISE -> INVESTIGATE -> SEARCH');
 {
   const { g, evs } = mk();
@@ -74,6 +91,73 @@ console.log('HIDING');
   g.onInteract(1, { k: 'locker', id: 2 }); // dives into a locker in plain view
   run(g, 12);
   assert(evs.some((e) => e.e === 'hide' && e.pulled), 'if it watches you climb into a locker, it drags you out');
+}
+console.log('HOLDING YOUR BREATH (lockers)');
+{
+  const trial = (flags, watched) => {
+    const { g } = mk(1, 'intermediate'); const p = g.players.get(1), m = g.monster, L = MAP.lockers[3];
+    p.hidden = 3; p.flags = flags; p.x = L.x + 0.5; p.z = L.z + 0.5;
+    m.x = L.x + L.dx + 0.5; m.z = L.z + L.dz + 0.5; m.path = []; m.startSearch(m.x, m.z); m.timer = 30;
+    if (watched) m.sawHide = 1;
+    m.inspect = { id: 3, t: 0.05 }; m.inspected.add(3);
+    run(g, 0.2);
+    return p.hidden === 3;
+  };
+  let held = 0, notHeld = 0, watched = 0;
+  for (let i = 0; i < 60; i++) { if (trial(16, false)) held++; if (trial(0, false)) notHeld++; if (trial(16, true)) watched++; }
+  assert(held > 25 && held < 58, `holding your breath often makes him walk past the locker (${held}/60 on Intermediate)`);
+  assert(notHeld === 0, 'breathing normally in a locker he checks: always found');
+  assert(watched === 0, 'if he watched you climb in, holding your breath does not help');
+}
+console.log('SEAT ROWS');
+{
+  const { g, evs } = mk(1); const p = g.players.get(1), m = g.monster;
+  m.x = 24.5; m.z = 50.5; m.ry = Math.PI; m.path = []; m.timer = 99; // in front of the stage, facing the seats
+  p.x = 20.5; p.z = 45.5; p.flags = 1; // crouched between two rows, ~6 m away
+  run(g, 4);
+  assert(!states(evs).includes('chase'), 'crouching between the auditorium seat rows hides you at 6 m');
+  p.flags = 2; run(g, 3);
+  assert(states(evs).includes('chase'), '...standing up with the torch on does not');
+}
+console.log('LURES');
+{
+  const { g, evs } = mk(1); const p = g.players.get(1), m = g.monster;
+  m.x = 30.5; m.z = 39.5; m.path = []; m.timer = 99; m.ry = 0;
+  const P = MAP.lures.find((l) => l.kind === 'piano'); p.x = P.x; p.z = P.z - 1.3; p.y = 0; p.hidden = -1;
+  g.onInteract(1, { k: 'lure', id: P.id });
+  assert(evs.some((e) => e.e === 'lure' && e.id === P.id), 'playing the piano makes a sound everyone hears');
+  p.x = 2; p.z = 22; p.hidden = 0; // and you get out of there
+  run(g, 0.3);
+  assert(m.state === 'investigate' && Math.hypot(m.noiseTarget.x - P.x, m.noiseTarget.z - P.z) < 2, 'he goes to see who is playing');
+  evs.length = 0; p.hidden = -1; p.x = P.x; p.z = P.z - 1.3; g.onInteract(1, { k: 'lure', id: P.id });
+  assert(!evs.some((e) => e.e === 'lure') && evs.some((e) => e.e === 'msg' && /Not yet/.test(e.text)), 'the piano has a cooldown');
+  const B = MAP.lures.find((l) => l.kind === 'greatbell');
+  p.x = B.x + 1.5; p.z = B.z - 1.2; p.y = 0.3; evs.length = 0;
+  g.onInteract(1, { k: 'lure', id: B.id }); const first = evs.some((e) => e.e === 'lure');
+  g.time += 999; evs.length = 0; g.onInteract(1, { k: 'lure', id: B.id });
+  assert(first && !evs.some((e) => e.e === 'lure'), 'the great bell rings once per match, never again');
+  const R = MAP.lures.find((l) => l.kind === 'radio');
+  const { g: g2, evs: e2 } = mk(1); const p2 = g2.players.get(1), m2 = g2.monster;
+  m2.x = 14.5; m2.z = 40.5; m2.path = []; m2.timer = 99;
+  p2.x = R.x - 1.2; p2.z = R.z + 0.5; g2.onInteract(1, { k: 'lure', id: R.id }); p2.x = 2; p2.z = 22; p2.hidden = 0;
+  run(g2, R.delay - 1);
+  assert(m2.state !== 'investigate', `the radio stays quiet for ${R.delay} s, so you can get away`);
+  run(g2, 2);
+  assert(m2.state === 'investigate' && e2.some((e) => e.e === 'lure'), '...then it blares and he comes for it');
+}
+console.log('DROPPING AND TOSSING');
+{
+  const { g, evs } = mk(1); const p = g.players.get(1);
+  p.x = 20.5; p.z = 22.5; p.y = 0; p.ry = -Math.PI / 2; p.hidden = -1; p.inv[0] = { id: 900, type: 'battery' }; p.inv[1] = { id: 901, type: 'fuse' };
+  g.onDrop(1, 0);
+  const d = evs.find((e) => e.e === 'item+' && e.item.id === 900);
+  assert(d && d.from && Math.abs(d.item.x - 21.1) < 0.3 && !p.inv[0], 'tapping G drops the item just in front of you (animated from your hand)');
+  g.onDrop(1, { slot: 1, toss: 1, ry: -Math.PI / 2 });
+  const t = evs.find((e) => e.e === 'item+' && e.item.id === 901);
+  assert(t && t.toss && t.item.x > 24 && t.item.x < 25.3, `holding G tosses it ~4.5 m ahead (landed at x=${t && t.item.x})`);
+  p.inv[2] = { id: 902, type: 'bottle' }; p.x = 20.5; p.z = 21.5; g.onDrop(1, { slot: 2, toss: 1, ry: 0 }); // straight at the wall
+  const w = evs.find((e) => e.e === 'item+' && e.item.id === 902);
+  assert(w && w.item.z > 21 && w.item.z < 21.6, 'a toss never goes through a wall');
 }
 console.log('BELL');
 {

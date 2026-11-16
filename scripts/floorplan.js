@@ -6,6 +6,7 @@ import { MAP, W, H, WALL, ROOMS, STAIRS } from '../client/shared/map.js';
 const LABELS = {
   'Main Hall': 'MAIN HALL', 'West Corridor': 'WEST CORRIDOR', 'East Corridor': 'EAST CORRIDOR', 'North Corridor': 'NORTH CORRIDOR', 'South Corridor': 'SOUTH CORRIDOR',
   'Basement Stairs': 'STAIRS ↓', Stairwell: '', Courtyard: 'EXIT', 'Hidden Archive': 'HIDDEN ROOM',
+  'West Wing': 'WEST WING', 'East Wing': 'EAST WING', 'Lower Hall': 'LOWER HALL', "Janitor's Closet": 'JANITOR',
 };
 
 /**
@@ -20,8 +21,9 @@ export function floorPlanSVG(opts = {}) {
   const text = (x, z, str, size, fill = '#cfd6cc', extra = '') => out.push(`<text x="${(x * c).toFixed(1)}" y="${(z * c).toFixed(1)}" font-size="${(size * c).toFixed(1)}" fill="${fill}" text-anchor="middle" dominant-baseline="middle" ${extra}>${str}</text>`);
   const hidden = (r) => r.secret && !secret;
 
-  out.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W * c} ${H * c}" font-family="system-ui, 'Segoe UI', Arial, sans-serif" font-weight="600">`);
-  rect(0, 0, W, H, '#0a0d0c');
+  const HH = H + (legend ? 7.2 : 0); // the legend sits under the school
+  out.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W * c} ${HH * c}" font-family="system-ui, 'Segoe UI', Arial, sans-serif" font-weight="600">`);
+  rect(0, 0, W, HH, '#0a0d0c');
 
   // floors: every walkable cell, so the outline is exactly what you can walk on
   for (let z = 0; z < H; z++) for (let x = 0; x < W; x++) {
@@ -32,14 +34,14 @@ export function floorPlanSVG(opts = {}) {
     const di = MAP.doorAt[i];
     if (di >= 0 && MAP.doors[di].kind === 'shelf' && !secret) continue;
     const lv = MAP.level[i];
-    const fill = room && room.outside ? '#16301f' : lv === 2 ? '#1b2a44' : lv === 1 ? '#2a3350' : room && room.corridor ? '#2b332d' : '#394239';
+    const fill = room && room.outside ? '#16301f' : lv === 2 ? '#1b2a44' : lv === 1 ? '#2a3350' : lv === 3 ? '#4a3f2c' : room && room.corridor ? '#2b332d' : '#394239';
     rect(x - 0.02, z - 0.02, 1.04, 1.04, fill);
   }
   // stairs treads
   for (let x = STAIRS.x0; x < STAIRS.x1; x += 0.5) out.push(`<line x1="${x * c}" y1="${STAIRS.z0 * c}" x2="${x * c}" y2="${STAIRS.z1 * c}" stroke="#6f7fae" stroke-width="${c * 0.06}"/>`);
   // furniture (faint), so rooms are recognisable
   for (const p of MAP.props) {
-    if (['board', 'hoop', 'portrait', 'pipes'].includes(p.t)) continue;
+    if (['board', 'hoop', 'portrait', 'pipes', 'gap', 'curtain', 'drape', 'showers', 'bucket'].includes(p.t)) continue;
     const ri = MAP.roomOf[Math.floor(p.z) * W + Math.floor(p.x)];
     if (ri >= 0 && hidden(ROOMS[ri])) continue;
     const pad = p.t === 'desk' ? 0.22 : 0.08;
@@ -60,6 +62,7 @@ export function floorPlanSVG(opts = {}) {
   mark(54.1, 9.7, '#5ad1e6', 'S');
   mark(56.1, 13.2, '#f2c94c', 'K');
   mark(7.2, 22.5, '#7fc58a', '▶');
+  for (const L of MAP.lures) mark(L.x, L.z, '#e98a3a', L.kind === 'piano' ? 'P' : L.kind === 'radio' ? 'R' : 'B');
 
   // room names
   for (const r of ROOMS) {
@@ -68,7 +71,7 @@ export function floorPlanSVG(opts = {}) {
     if (!name) continue;
     const w = r.x1 - r.x0 + 1, h = r.z1 - r.z0 + 1, cx = r.x0 + w / 2, cz = r.z0 + h / 2;
     const col = r.basement ? '#b9c8f0' : r.outside ? '#9fe0ae' : r.secret ? '#d9b3ee' : r.corridor ? '#8f998d' : '#e8ece4';
-    if (r.corridor && h > w * 2) { text(cx, cz + (r.name === 'West Corridor' ? 5 : -4), name, 0.78, col, `transform="rotate(-90 ${cx * c} ${(cz + (r.name === 'West Corridor' ? 5 : -4)) * c})" letter-spacing="${c * 0.08}"`); continue; }
+    if (r.corridor && h > w * 2) { const oz = { 'West Corridor': 5, 'East Corridor': -4, 'West Wing': -5, 'East Wing': 4 }[r.name] ?? 0; text(cx, cz + oz, name, 0.78, col, `transform="rotate(-90 ${cx * c} ${(cz + oz) * c})" letter-spacing="${c * 0.08}"`); continue; }
     if (r.corridor && r.name !== 'Main Hall') { text(cx, cz, name, 0.78, col, `letter-spacing="${c * 0.08}"`); continue; }
     if (r.name === 'Main Hall') { text(26, 22.5, name, 0.95, col, `letter-spacing="${c * 0.2}"`); continue; }
     const size = r.outside || w < 5 ? 0.7 : 0.9;
@@ -79,17 +82,19 @@ export function floorPlanSVG(opts = {}) {
 
   if (legend) {
     text(31.5, 1.7, 'THE LAST BELL — SCHOOL FLOOR PLAN', 1.25, '#e8ece4', `letter-spacing="${c * 0.2}"`);
+    const LZ = H + 0.6;
     const items = [
       ['#d9d4c7', 'Door'], ['#e04a3a', 'Locked door / main gate'], ['#c98a2b', 'Locker (hide inside)'], ['#566153', 'Table (crouch under it)'],
       ['#f2c94c', 'F  Fuse box   ·   K  Gate key (on the desk)'], ['#5ad1e6', 'S  Security console'], ['#7fc58a', '▶  Where you start'], ['#1b2a44', 'Basement level (down the stairs)'],
+      ['#e98a3a', 'P piano · R radio · B great bell (lures)'], ['#4a3f2c', 'Stage (a step up)'],
     ];
     if (secret) items.push(['#b06ad6', 'Loose bookshelf → hidden room']);
     items.forEach(([col, label], i) => {
-      const x = 15.5 + (i % 2) * 16, z = 42.5 + Math.floor(i / 2) * 1.12;
+      const x = 15.5 + (i % 2) * 22, z = LZ + Math.floor(i / 2) * 1.12;
       rect(x, z - 0.36, 0.72, 0.72, col, `rx="${c * 0.1}"`);
       out.push(`<text x="${(x + 1.1) * c}" y="${z * c}" font-size="${0.7 * c}" fill="#cfd6cc" dominant-baseline="middle">${label}</text>`);
     });
-    out.push(`<text x="${1 * c}" y="${44 * c}" font-size="${0.72 * c}" fill="#8f998d"><tspan x="${1 * c}" dy="0">Fuses, the office key, batteries,</tspan><tspan x="${1 * c}" dy="${c}">bottles and the rest are in</tspan><tspan x="${1 * c}" dy="${c}">different rooms every match.</tspan></text>`);
+    out.push(`<text x="${1 * c}" y="${(LZ + 0.2) * c}" font-size="${0.72 * c}" fill="#8f998d"><tspan x="${1 * c}" dy="0">Fuses, the office key, batteries,</tspan><tspan x="${1 * c}" dy="${c}">bottles and the rest are in</tspan><tspan x="${1 * c}" dy="${c}">different rooms every match.</tspan></text>`);
   }
   out.push('</svg>');
   return out.join('');
