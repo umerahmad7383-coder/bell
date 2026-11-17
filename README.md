@@ -17,6 +17,15 @@ An online co-op horror game for 2–8 players. You and your friends are locked i
 | Hunt Mode (player-controlled Headmaster) | Built. Rules are covered by `test/hunt.js`; balance has not been played by real groups yet. |
 | Voice chat | Built. Connection and audio flow were tested between two browsers on one machine with a fake microphone. **Not tested between real networks or by ear.** |
 
+## What is new in 1.3.1
+
+- **No more sleeping server on Render's free plan (for most of the day).** Render puts a free web service to sleep after 15 minutes without visitors, and waking it takes about a minute, so new players clicking your link thought the game was broken. The server now visits its own address every 10 minutes to stay awake, with nothing to set up (Render tells the server its own address).
+  - Render gives each account **750 free hours a month, shared by all its free services**, and if they run out, every free service on the account is switched off until the next month. So by default the game stays awake **18 hours a day, 10:00 to 04:00 UTC** (2 pm to 8 am in the Gulf, evenings in Europe and the Americas): about 540–560 hours a month, leaving about 200 for your other free services. Outside those hours it sleeps when nobody is playing and wakes for the next visitor, as before.
+  - Change it with the `KEEP_AWAKE` environment variable on Render: another window in UTC hours such as `14-2`, `on` for all day (only if this is your only free service), or `off`.
+- **Version on the main menu**, and if the game was updated while your page was open, the menu says so and offers a **Reload** button.
+- **Link previews.** Paste your game's link into Discord, WhatsApp, X or Reddit and it shows a picture of the school, the title and a one-line pitch. Invite links say "You're invited: room ABC123".
+- **Press kit** in the `press/` folder: six screenshots, plus ready-to-paste descriptions for itch.io and CrazyGames, Reddit posts, a message for YouTubers and ideas for short videos.
+
 ## What is new in 1.3
 
 - **Play with an Xbox or PlayStation controller.** Plug one in or pair it with Bluetooth and press any button. Everything works with the pad:
@@ -156,6 +165,8 @@ Replace the files in your GitHub repository with the new ones (on the repository
 | `MONSTER_GRACE` | *(from difficulty)* | Seconds at match start before the Headmaster can notice anyone. Overrides the difficulty's own value. |
 | `ICE_SERVERS` | *(none)* | Extra WebRTC servers for voice chat, as JSON. Only needed if some players cannot hear each other: add a TURN relay, e.g. `[{"urls":"turn:host:3478","username":"u","credential":"p"}]`. |
 | `MONSTER_SPEED` | `1` | Extra multiplier on his movement (0.5–1.5), applied on top of the chosen difficulty. |
+| `KEEP_AWAKE` | `10-4` | On a free host the server visits its own address every 10 minutes so it does not fall asleep, during these UTC hours (default 10:00–04:00, 18 hours a day). Any other window such as `14-2`, `on` for all day (only if this is the only free service on your Render account: they share 750 hours a month), or `off`. |
+| `KEEP_AWAKE_URL` | *(Render sets it)* | The address to visit. Render provides it automatically; set it yourself on other hosts. |
 | `RESUME_SECS` | `45` | How long a player whose connection dropped keeps their place before they are removed from the lobby and the match. |
 
 See `.env.example`. The only client-side setting is `client/config.js`.

@@ -7,6 +7,9 @@ import { Server } from 'socket.io';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import https from 'node:https';
+import { keepAwakeWindow, inWindow } from './awake.js';
 import { Game, TICK_HZ } from './game.js';
 import { DIFFICULTY, MODIFIERS, TUNE, cleanLook, cleanClass, cleanTune } from '../client/shared/defs.js';
 
@@ -27,7 +30,26 @@ try { if (process.env.ICE_SERVERS) ICE_SERVERS = ICE_SERVERS.concat(JSON.parse(p
 
 const app = express();
 const clientDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'client');
-app.get('/health', (_req, res) => res.json({ ok: true, lobbies: lobbies.size, uptime: Math.round(process.uptime()) }));
+const VERSION = (() => { try { return JSON.parse(readFileSync(join(clientDir, '..', 'package.json'), 'utf8')).version; } catch { return ''; } })();
+let keepAwakeVisits = 0;
+app.get('/health', (req, res) => { if (req.query.keepawake) keepAwakeVisits++; res.json({ ok: true, version: VERSION, lobbies: lobbies.size, uptime: Math.round(process.uptime()), keepAwake: keepAwakeVisits }); });
+
+// The page itself, with link previews made for whoever is asking: when a link is pasted into Discord,
+// WhatsApp, X or Reddit, they show the share picture and title. Their previews need full addresses
+// (https://your-game.onrender.com/assets/share.jpg), and an invite link gets its own title.
+const INDEX_HTML = readFileSync(join(clientDir, 'index.html'), 'utf8');
+const attr = (v) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function servePage(req, res) {
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const origin = /^[a-z0-9.:-]+$/i.test(host) && /^https?$/.test(proto) ? `${proto}://${host}` : '';
+  const room = String(req.query.room || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+  let html = INDEX_HTML.replace(/content="assets\//g, `content="${origin}/assets/`).replace('<meta property="og:url" content="">', `<meta property="og:url" content="${attr(origin + '/' + (room.length === 6 ? `?room=${room}` : ''))}">`);
+  if (room.length === 6) html = html.replace(/(<meta (?:property="og:title"|name="twitter:title") content=")[^"]*"/g, `$1You're invited: room ${room} on The Last Bell"`);
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(html);
+}
+app.get(['/', '/index.html'], servePage);
 // "no-cache" = the browser may keep files but must ask whether they changed before using them,
 // so a redeploy reaches every player on their next page load (no stale game code).
 app.use(express.static(clientDir, { etag: true, lastModified: true, setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
@@ -142,6 +164,7 @@ function startGame(l) {
 }
 
 io.on('connection', (socket) => {
+  socket.emit('hello', { version: VERSION }); // an old page still open after an update can offer a reload
   const lobbyOf = () => lobbies.get(socket.data.code);
   const member = () => lobbyOf()?.members.get(socket.id);
   const ack = (cb, v) => typeof cb === 'function' && cb(v);
@@ -287,3 +310,36 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => console.log(`THE LAST BELL listening on :${PORT}  (client origin: ${CLIENT_ORIGIN})`));
+
+// ---- staying awake on a free host ----
+// Render's free plan puts a web service to sleep after 15 minutes without visitors, and waking it up
+// takes about a minute: long enough for someone clicking your link to think the game is broken. So the
+// server visits its own public address every 10 minutes to stay awake. Render sets RENDER_EXTERNAL_URL
+// by itself (on other hosts set KEEP_AWAKE_URL).
+//
+// Render gives each account 750 free hours a month, SHARED by all its free services, and if they run
+// out every free service is switched off until the next month. So by default it only stays awake for
+// part of the day:
+//   KEEP_AWAKE unset   10-4  : 10:00 to 04:00 UTC, 18 hours a day (2 pm to 8 am in the Gulf; evenings in
+//                              Europe and the Americas). About 540-560 hours a month.
+//   KEEP_AWAKE=14-2           any other window, in UTC hours (it can wrap past midnight)
+//   KEEP_AWAKE=on             all day (about 720-744 hours: only if this is your ONLY free service)
+//   KEEP_AWAKE=off            never: it sleeps whenever nobody is playing
+// Outside the window it sleeps when idle as usual, and wakes up for the next visitor.
+const SELF_URL = (process.env.KEEP_AWAKE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
+const AWAKE = keepAwakeWindow(process.env.KEEP_AWAKE);
+if (SELF_URL && AWAKE) {
+  const every = Math.max(0.01, Number(process.env.KEEP_AWAKE_MINUTES) || 10);
+  const visit = () => {
+    if (!inWindow(AWAKE, new Date().getUTCHours())) return; // outside the window: let it doze off
+    try {
+      const lib = SELF_URL.startsWith('https:') ? https : http;
+      lib.get(`${SELF_URL}/health?keepawake=1`, { headers: { 'user-agent': 'last-bell-keep-awake' }, timeout: 15000 }, (r) => r.resume())
+        .on('error', (e) => console.warn('keep-awake visit failed:', e.message))
+        .on('timeout', function () { this.destroy(); });
+    } catch (e) { console.warn('keep-awake visit failed:', e.message); }
+  };
+  setInterval(visit, every * 60000);
+  const span = AWAKE[0] === 0 && AWAKE[1] === 24 ? 'all day' : `from ${AWAKE[0]}:00 to ${AWAKE[1]}:00 UTC`;
+  console.log(`Keeping the server awake ${span}: visiting ${SELF_URL}/health every ${every} minutes (KEEP_AWAKE=off stops it).`);
+}

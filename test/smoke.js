@@ -13,7 +13,7 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
 let child = null;
 process.on('uncaughtException', (err) => { console.error('FAIL (crash):', err); if (child) child.kill(); process.exit(1); });
 if (!process.env.TEST_URL) {
-  child = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, PORT: String(PORT), MONSTER_GRACE: '900', RESUME_SECS: '1' }, stdio: ['ignore', 'pipe', 'inherit'] });
+  child = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, PORT: String(PORT), MONSTER_GRACE: '900', RESUME_SECS: '1', RENDER_EXTERNAL_URL: `http://localhost:${PORT}`, KEEP_AWAKE: 'on', KEEP_AWAKE_MINUTES: '0.01' }, stdio: ['ignore', 'pipe', 'inherit'] });
   await new Promise((res) => child.stdout.on('data', (d) => String(d).includes('listening') && res()));
 }
 
@@ -79,6 +79,29 @@ import { floorY } from '../client/shared/map.js';
 const yAt = (x, z) => floorY(x, z);
 
 try {
+  console.log('FREE HOSTING');
+  {
+    const { keepAwakeWindow: kw, inWindow } = await import('../server/awake.js');
+    const def = kw(undefined), awake = [...Array(24).keys()].filter((h) => inWindow(def, h)).length;
+    assert(awake === 18 && inWindow(def, 10) && inWindow(def, 3) && !inWindow(def, 4) && !inWindow(def, 9), `by default it stays awake 18 hours a day (10:00-04:00 UTC), so other free services on the account keep some of the 750 hours`);
+    assert(kw('off') === null && kw('on')[1] === 24 && kw('14-2')[0] === 14 && inWindow(kw('14-2'), 1) && !inWindow(kw('14-2'), 2), 'KEEP_AWAKE can be off, on (all day) or any UTC window');
+    const pkg = JSON.parse(await (await import('node:fs/promises')).readFile(new globalThis.URL('../package.json', import.meta.url), 'utf8'));
+    const { VERSION } = await import('../client/js/version.js');
+    assert(VERSION === pkg.version, `the version on the menu (${VERSION}) matches package.json (${pkg.version})`);
+  }
+  if (!process.env.TEST_URL) {
+    const hello = await new Promise((res) => { const s = io(URL, { transports: ['websocket'] }); s.on('hello', (h) => { s.disconnect(); res(h); }); });
+    assert(hello && hello.version, `the server tells every page which version it runs (${hello && hello.version}), so an old open page can offer a reload`);
+    await sleep(1500);
+    const h = await (await fetch(`${URL}/health`)).json();
+    assert(h.ok && h.keepAwake > 0, `the server keeps itself awake on a free host by visiting its own address (${h.keepAwake} visits in 1.5 s at the test's fast pace)`);
+    const page = await (await fetch(`${URL}/?room=ab12cd`, { headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'mygame.onrender.com' } })).text();
+    assert(page.includes('content="https://mygame.onrender.com/assets/share.jpg"') && page.includes("You're invited: room AB12CD"), 'link previews: full picture address, and invite links get their own title');
+    const img = await fetch(`${URL}/assets/share.jpg`);
+    assert(img.ok && /jpeg/.test(img.headers.get('content-type')), 'the share picture is served');
+    const evil = await (await fetch(`${URL}/?room="><script>`, { headers: { 'x-forwarded-host': 'evil"><script>' } })).text();
+    assert(!evil.includes('<script>alert') && !evil.includes('evil"><script>'), 'nothing from the address or headers can be injected into the page');
+  }
   console.log('LOBBY');
   const a = new Bot('Ana'), b = new Bot('Ben'), c = new Bot('Cy');
   await sleep(300);

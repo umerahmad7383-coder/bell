@@ -9,6 +9,7 @@ import { MenuScene } from './menubg.js';
 import { input, padGlyph, padName, BTN } from './input.js';
 import { startPadNav } from './padnav.js';
 import { renderPadDiagram, padTables, livePadDiagram } from './paddiagram.js';
+import { VERSION } from './version.js';
 import { PLAYER_COLORS, PlayerModel } from './entities.js';
 import { DIFFICULTY, DIFFICULTY_ORDER, MODIFIERS, MODIFIER_ORDER, CLASSES, CLASS_ORDER, TUNE, TUNE_ORDER, LOOKS, LOOK_KEYS, LOOK_LABELS, cleanLook, randomLook } from '../shared/defs.js';
 
@@ -228,6 +229,14 @@ socket.on('connect', () => {
     overlay('s-join', false); enterLobby(r);
   });
 });
+// version on the menu, and a reload offer when the server has been updated since this page loaded
+$('version').textContent = `Version ${VERSION}`;
+socket.on('hello', (h) => {
+  const newer = h && h.version && h.version !== VERSION;
+  $('update').hidden = !newer;
+  if (newer) $('update').querySelector('span').textContent = `Version ${h.version} of the game is out (you have ${VERSION}).`;
+});
+$('btn-update').onclick = () => { seat.set(null); location.reload(); };
 socket.on('connect_error', () => setConn(`Cannot reach the game server (${SERVER.replace(/^https?:\/\//, '')}). Retrying…`, 'bad'));
 socket.on('disconnect', (reason) => {
   setConn('Connection lost. Reconnecting…', 'bad');
