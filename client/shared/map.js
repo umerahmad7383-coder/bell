@@ -56,14 +56,15 @@ export const ROOMS = [
 // [x, z, options]
 const DOOR_DEFS = [
   [16, 12], [21, 20], [31, 20], [31, 7], [45, 12], [40, 20], [16, 31], [24, 38],
-  [45, 31], [38, 38], [13, 14], [13, 27], [13, 36], [13, 5], [48, 8],
+  [45, 31], [42, 38], [13, 14], [13, 27], [13, 36], [13, 5], [48, 8],
   [48, 15, { locked: true, lock: 'principal' }],
   [48, 22], [48, 31], [59, 27, { basement: true }], [58, 37, { basement: true }],
   [42, 10, { kind: 'shelf' }],
   // South Wing
   [13, 45], [13, 53], [16, 46], [32, 44], [45, 45], [45, 52], [38, 56], [24, 56], [48, 51],
 ];
-const OPENINGS = [[22, 24], [23, 24], [38, 24], [39, 24]];
+// (the gym's doorways sit toward its corners, so the basketball hoops get the middle of each wall)
+const OPENINGS = [[22, 24], [23, 24], [42, 24], [43, 24]];
 const GATE_CELLS = [[4, 21], [4, 22], [4, 23]];
 
 function build() {
@@ -319,10 +320,14 @@ function build() {
   ].map(([x, z, nx, nz]) => ({ x, z, nx, nz }));
 
   const playerSpawns = [];
-  for (let i = 0; i < 8; i++) playerSpawns.push({ x: 6.5 + (i % 4) * 0.9, z: 21.9 + Math.floor(i / 4) * 1.2 });
+  // Main Hall, facing east: three abreast across the hall, rows well apart, so nobody starts with a
+  // classmate's back filling their view (and nobody starts inside the lockers along x 8-10)
+  for (const [x, z] of [[6.6, 22.5], [6.6, 21.6], [6.6, 23.4], [11.6, 22.5], [11.6, 21.6], [11.6, 23.4], [14.6, 22.0], [14.6, 23.0]]) playerSpawns.push({ x, z });
   const escapeZone = { x0: 0.5, x1: 3.6, z0: 19, z1: 26 };
 
-  return { grid, level, blocked, cover, shade, roomOf, doors, doorAt, gate, props, lockers, fuseBox, securityConsole, gateKeySpot, lures, spots, waypoints, lights, windows, playerSpawns, escapeZone };
+  // Thomas Peters' locker (Locker Room, north wall): return his lost teddy here
+  const thomasLocker = lockers.find((L) => L.x === 53 && L.z === 48).id;
+  return { grid, level, blocked, cover, shade, roomOf, doors, doorAt, gate, props, lockers, fuseBox, securityConsole, gateKeySpot, lures, spots, waypoints, lights, windows, playerSpawns, escapeZone, thomasLocker };
 }
 
 export const MAP = build();

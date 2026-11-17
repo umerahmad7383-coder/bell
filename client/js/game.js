@@ -7,7 +7,8 @@ import { buildWorld } from './world.js';
 import { buildPhysics, EYE_STAND, EYE_CROUCH, EYE_DOWNED } from './physics.js';
 import { MonsterModel, PlayerModel, PLAYER_COLORS } from './entities.js';
 import { ViewModel } from './viewmodel.js';
-import { ITEM_TYPES, DIFFICULTY } from '../shared/defs.js';
+import { ITEM_TYPES, DIFFICULTY, CLASSES } from '../shared/defs.js';
+import { input, BTN, glyph, label, fill } from './input.js';
 
 export const QUALITY = {
   // lights = ceiling lights that are real light sources once the power is on; darkLights = while it is off
@@ -16,20 +17,28 @@ export const QUALITY = {
   high: { maxDpr: 1.5, scale: 1, shadows: true, shadowSize: 2048, lights: 6, darkLights: 2, spots: 3, gloss: true },
 };
 export const ITEM_HINT = {
-  fuse: 'Fuse — carry it to the fuse box in the Boiler Room and press E',
-  key_principal: "Office Key — press E on the Principal's Office door",
-  key_gate: 'Gate Key — press E on the main gate once its lock is disarmed',
-  battery: 'Battery — left click to recharge your torch',
-  medkit: 'Med Kit — left click to heal yourself, or next to a downed teammate to revive them at once',
-  lockpick: 'Lockpick — press E on a locked door to pick it (one use)',
-  bottle: 'Bottle — left click to throw it; he goes to the noise',
-  bell: 'Hand Bell — left click to ring it; drives him off once',
+  fuse: 'Fuse — carry it to the fuse box in the Boiler Room and press {interact}',
+  key_principal: "Office Key — press {interact} on the Principal's Office door",
+  key_gate: 'Gate Key — press {interact} on the main gate once its lock is disarmed',
+  battery: 'Battery — {use} to recharge your torch',
+  medkit: 'Med Kit — {use} to heal yourself, or next to a downed teammate to revive them at once',
+  lockpick: 'Lockpick — press {interact} on a locked door to pick it (one use)',
+  bottle: 'Bottle — {use} to throw it; he goes to the noise',
+  bell: 'Hand Bell — {use} to ring it; drives him off once',
+  camera: 'Camera — {use} to flash it in his face (within 8 m); he reels back',
+  soda: 'Energy Drink — {use}: unlimited stamina for 12 seconds',
+  alarm: 'Alarm Clock — {use} to wind it and set it down; it rings in 8 s and he comes to it',
+  chalk: 'Chalk — {use} marks the wall you face: X. Hold A or D for an arrow, S for a warning',
+  teddy: "Thomas's Teddy — put it back in his locker in the Locker Room (press {interact} there)",
 };
-const DROP_HINT = ' · G drop · hold G to toss';
+const DROP_HINT = ' · {drop} drop · hold {drop} to toss';
+const CHALK_PAD = 'Chalk — {use} marks the wall you face: X. Hold the left stick left or right for an arrow, down for a warning';
 export const ITEM_INFO = {
   fuse: ['Fuse', '⚡'], key_principal: ['Office Key', '🗝️'], key_gate: ['Gate Key', '🔑'], battery: ['Battery', '🔋'],
   medkit: ['Med Kit', '⛑️'], lockpick: ['Lockpick', '📎'], bottle: ['Bottle', '🍾'], bell: ['Hand Bell', '🔔'], note: ['Note', '📄'],
+  camera: ['Camera', '📷'], soda: ['Energy Drink', '🥤'], alarm: ['Alarm Clock', '⏰'], chalk: ['Chalk', '🖍️'], teddy: ['Teddy Bear', '🧸'],
 };
+const MOD_LABEL = { onehit: 'One strike', blackout: 'Lights out', restless: 'Restless school', sportsday: 'Sports day' };
 const SEND_HZ = 15;
 export const BACKPEDAL = 0.7, STRAFE = 0.88; // movement speed multipliers (walking backwards / sideways)
 const BREATH_SECS = 7; // how long you can hold your breath in a locker
@@ -58,7 +67,8 @@ export class Game {
     const scene = (this.scene = new THREE.Scene());
     scene.background = new THREE.Color(0x020305);
     scene.fog = new THREE.FogExp2(0x020305, 0.062);
-    this.cam = new THREE.PerspectiveCamera(settings.fov, innerWidth / innerHeight, 0.06, 90);
+    // the fog swallows everything past ~28 m, so nothing beyond 34 m is drawn at all (smoother, looks identical)
+    this.cam = new THREE.PerspectiveCamera(settings.fov, innerWidth / innerHeight, 0.06, 34);
     this.cam.rotation.order = 'YXZ';
     scene.add(this.cam);
     this.amb = new THREE.AmbientLight(0x7486a8, 0.36); scene.add(this.amb); this.ambBase = 0.36;
@@ -86,7 +96,7 @@ export class Game {
     this.id = init.you;
     this.roster = new Map(); this.remotes = new Map();
     init.players.forEach((p, i) => {
-      this.roster.set(p.id, { id: p.id, name: p.name, state: p.state, hp: p.hp, hidden: -1, color: i });
+      this.roster.set(p.id, { id: p.id, name: p.name, state: p.state, hp: p.hp, downs: p.downs || 0, away: !!p.away, hidden: -1, color: i, cls: p.cls || 'athlete' });
       if (p.id !== this.id) {
         const model = new PlayerModel(p.name, i, p.look); model.group.position.set(p.x, p.y, p.z); scene.add(model.group);
         this.remotes.set(p.id, { id: p.id, model, buf: [], cur: { x: p.x, y: p.y, z: p.z, ry: 0, rx: 0, f: 0, h: 0 }, speed: 0, stepD: 0, lastSnap: 0 });
@@ -105,19 +115,20 @@ export class Game {
       this.body = null; this.vm = new ViewModel(null, this.T); this.vm.enableClaws();
       this.monster.group.visible = false;
       scene.fog.density = this.hunt.nightFog || 0.1; // he sees in the dark, but not far
+      this.cam.far = Math.min(34, 2.6 / scene.fog.density); this.cam.updateProjectionMatrix();
       this.mh = { rage: 1, grace: this.hunt.grace, tp: 0, trap: 0, lights: 0, atk: 0, slow: 0, stun: 0, traps: 0 }; this.mbusy = 0; this.mwind = 0; this.mstep = 0;
     }
     this.traps = new Map(); (init.traps || []).forEach((t) => this.addTrap(t.id, t.p));
     this.rootT = 0;
-    this.maxHp = init.maxHp || 2; this.difficulty = init.difficulty || 'intermediate';
+    this.maxHp = init.maxHp || 2; this.maxDowns = init.maxDowns ?? 2; this.difficulty = init.difficulty || 'intermediate';
     this.crouchLatch = false;
     this.tips = settings.tips ? [
-      [4, 'F (or right click) switches your torch on and off. It makes you much easier to see.'],
-      [13, 'Hold TAB for the notebook. Crouch with C to move quietly. He hears running.'],
-      [22, 'Q pings whatever you are looking at so your team can find it.'],
-      [31, 'E opens doors, picks things up and hides you in lockers.'],
-      [42, 'Tap G to drop what you are holding. Hold G and let go to toss it to a teammate.'],
-      [53, 'In a locker and he is checking it? Hold SPACE to hold your breath.'],
+      [4, '{torch} switches your torch on and off. It makes you much easier to see.'],
+      [13, 'Hold {notebook} for the notebook. Crouch with {crouch} to move quietly. He hears running.'],
+      [22, '{ping} pings whatever you are looking at so your team can find it.'],
+      [31, '{interact} opens doors, picks things up and hides you in lockers.'],
+      [42, 'Tap {drop} to drop what you are holding. Hold {drop} and let go to toss it to a teammate.'],
+      [53, 'In a locker and he is checking it? Hold {breath} to hold your breath.'],
     ] : [];
     this.frame = 0; this.prevYaw = -Math.PI / 2; this.prevPitch = 0;
     if (Q.shadows) renderer.shadowMap.autoUpdate = false; // refreshed every second frame in the loop: halves the shadow cost
@@ -128,8 +139,14 @@ export class Game {
     this.obj = init.obj; this.notes = [...init.notes];
     this.lureState = (init.lures || []).map(([used, ready]) => ({ used: !!used, readyAt: ready || 0 }));
     this.breath = 1; this.holding = false; this.gaspLock = false; this.hbT2 = 0; this.inspectMine = 0; this.gHeld = null; this.boostT = 0;
+    this.mods = new Set(init.mods || []); this.sodaT = 0; this.teddyDone = !!init.teddy;
+    const meR = this.roster.get(this.id); this.cls = this.role === 'monster' ? null : meR ? meR.cls : 'athlete';
+    this.final = init.final != null ? { until: init.final } : null; if (this.final) this.world.setAlarm(true);
+    this.senseT = 0;
+    this.roll = init.roll ? { id: init.roll.id, until: init.roll.t } : null; // (the local clock starts at 0)
+    for (const m of init.marks || []) this.world.addMark(m, this.markColor(m.by));
     this.world.setFuses(this.obj.fuses); this.world.setPower(this.obj.power);
-    this.inv = [null, null, null, null]; this.sel = 0;
+    this.inv = init.inv || [null, null, null, null]; this.sel = 0;
 
     // local player state
     this.yaw = -Math.PI / 2; this.pitch = 0; this.vx = 0; this.vz = 0;
@@ -143,11 +160,15 @@ export class Game {
     this.bind();
     this.renderInv(); this.renderNotebook(); this.renderTeam();
     $('hud').hidden = false; $('hud').classList.toggle('monster', this.role === 'monster'); $('mhud').hidden = this.role !== 'monster';
-    $('bar-stamina').querySelector('span').textContent = this.role === 'monster' ? 'Rage (hold Shift)' : 'Stamina';
-    const keys = this.role === 'monster' ? [['LMB', 'attack'], ['Shift', 'rage'], ['R', 'teleport'], ['T', 'trap'], ['Q', 'lights'], ['E', 'doors and lockers']] : [['F', 'torch'], ['Q', 'ping'], ['G', 'drop'], ['Tab', 'notebook'], ['M', 'mute'], ['Enter', 'chat'], ['Esc', 'menu']];
-    $('hint').innerHTML = keys.map(([k, v]) => `<span><kbd>${k}</kbd>${v}</span>`).join('');
-    if (this.role === 'monster') this.tips = [[1, `You are the Headmaster. You are frozen for ${this.hunt.grace} seconds while they scatter.`], [8, 'Left click attacks. Hold Shift to rage (fast, but it runs out). You see in the dark; sounds they make appear as pulses.'], [16, 'R teleports forward. T sets a trap. Q kills the lights. E opens doors and rips open lockers.'], [24, 'Torch beams held on your face and the hand bell will stun you. Stop them reaching the gate.']];
+    this.renderHints();
+    // on-screen keys follow whatever the player last touched: keyboard, Xbox pad or PlayStation pad
+    this.unsubInput = input.onChange(() => { this.renderHints(); this._prompt = null; this._status = null; this.renderInv(); });
+    if (this.role === 'monster') this.tips = [[1, `You are the Headmaster. You are frozen for ${this.hunt.grace} seconds while they scatter.`], [8, '{attack} attacks. Hold {rage} to rage (fast, but it runs out). You see in the dark; sounds they make appear as pulses.'], [16, '{teleport} teleports forward. {trap} sets a trap. {lights} kills the lights. {force} opens doors and rips open lockers.'], [24, 'Torch beams held on your face and the hand bell will stun you. Stop them reaching the gate.']];
     else if (this.mode === 'hunt' && this.tips.length) this.tips.unshift([2, `${init.hunter.name} is the Headmaster this round. Hold a torch beam on his face to blind him; crouch over his traps.`]);
+    // back from a dropped connection into a match already under way
+    const meNow = this.me;
+    if (meNow && meNow.state === 'downed') { const ip = init.players.find((q) => q.id === this.id); this.bleed = ip && ip.bleed ? ip.bleed : 30; }
+    if (meNow && (meNow.state === 'dead' || meNow.state === 'escaped')) this.cycleSpectate();
     this.resize();
     this.clock = performance.now();
     this.raf = requestAnimationFrame(this.loop);
@@ -194,11 +215,71 @@ export class Game {
     for (const k in S) this.s.on(k, S[k]);
   }
   lock() { if (this.ended) return; try { const p = this.r.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch { /* ignore */ } }
+  /** the key strip in the corner, in keyboard or controller buttons */
+  renderHints() {
+    const pad = input.mode === 'pad';
+    const keys = this.role === 'monster' ? [['attack', 'attack'], ['rage', 'rage'], ['teleport', 'teleport'], ['trap', 'trap'], ['lights', 'lights'], ['force', 'doors and lockers'], ['pause', 'menu']]
+      : [['torch', 'torch'], ['ping', 'ping'], ['drop', 'drop'], ['crouch', 'crouch'], ['notebook', 'notebook'], ['mute', 'mute'], ...(pad ? [] : [['chat', 'chat']]), ['pause', 'menu']];
+    $('hint').innerHTML = keys.filter(([k]) => pad || k !== 'crouch').map(([k, v]) => `<span>${glyph(k)}${v}</span>`).join('');
+    $('bar-stamina').querySelector('span').textContent = this.role === 'monster' ? `Rage (hold ${label('rage')})` : 'Stamina';
+  }
+  /**
+   * Controller, once per frame (Xbox, PlayStation or any standard pad). Movement is read in
+   * updateLocal/updateHunter from input.axes; this does the look and the button presses.
+   */
+  padFrame(dt) {
+    const P = input;
+    if (!P.connected) return;
+    const live = !this.ended && !this.chatOpen && !this.offline && !this.ui.blocked();
+    if (P.pressed(BTN.MENU) && !this.ended && !this.ui.blocked()) { P.consume(BTN.MENU); this.keys = {}; if (document.pointerLockElement) document.exitPointerLock(); this.ui.onPause(); return; }
+    // notebook while View / Share (or the PlayStation touchpad) is held
+    const note = live && this.role !== 'monster' && (P.held(BTN.VIEW) || P.held(BTN.PAD));
+    if (note !== !!this.padNote) { this.padNote = note; $('notebook').hidden = !note; }
+    if (!live) { this.gHeldPad = null; return; }
+    // look: a curve gives fine aim near the centre and fast turns at full tilt
+    const curve = (v) => Math.sign(v) * (0.35 * Math.abs(v) + 0.65 * v * v);
+    const rate = 3.3 * (this.set.padsens || 1), inv = this.set.padinvert ? -1 : 1;
+    this.yaw -= curve(P.axes[2]) * rate * dt;
+    this.pitch = clamp(this.pitch - curve(P.axes[3]) * rate * 0.72 * dt * inv, -1.45, 1.45);
+    if (this.role === 'monster') {
+      if (P.pressed(BTN.RT)) this.primary();
+      if (P.pressed(BTN.A)) this.interact();
+      if (P.pressed(BTN.X)) this.s.emit('g:mact', { k: 'tp' });
+      if (P.pressed(BTN.Y)) this.s.emit('g:mact', { k: 'trap' });
+      if (P.pressed(BTN.B)) this.s.emit('g:mact', { k: 'lights' });
+      return;
+    }
+    const me = this.me, out = me.state === 'dead' || me.state === 'escaped';
+    if (out) { if (P.pressed(BTN.A) || P.pressed(BTN.RT)) this.cycleSpectate(); return; }
+    if (P.pressed(BTN.A)) this.interact();
+    if (P.pressed(BTN.RT)) this.primary();
+    if (P.pressed(BTN.Y)) this.toggleFlash();
+    if (P.pressed(BTN.UP)) this.ping();
+    if (P.pressed(BTN.LB)) this.select((this.sel + 3) % 4);
+    if (P.pressed(BTN.RB)) this.select((this.sel + 1) % 4);
+    if (P.pressed(BTN.B) || P.pressed(BTN.RS)) this.padCrouch = !this.padCrouch;
+    if (P.pressed(BTN.LS)) this.padSprint = true; // click the left stick to run; it stops when you stop pushing forward
+    if (P.pressed(BTN.LEFT) && this.voice && this.voice.enabled) { this.voice.setMuted(!this.voice.muted); this.audio.click(); }
+    // tap to drop, hold and let go to toss (like G)
+    if (P.pressed(BTN.X) && this.inv[this.sel]) this.gHeldPad = this.time;
+    if (P.released(BTN.X) && this.gHeldPad != null) { const held = this.time - this.gHeldPad; this.gHeldPad = null; this.dropSelected(held); }
+  }
+  /** movement from the left stick: [forward, strafe] */
+  padMove() {
+    if (!input.connected || this.chatOpen || this.offline || this.ui.blocked()) return [0, 0];
+    return [-input.axes[1], input.axes[0]];
+  }
+  /** the connection dropped (on) or came back (off): say so, and stop taking input meanwhile */
+  setOffline(on) {
+    this.offline = !!on; this.keys = {};
+    $('netwarn').hidden = !on;
+    if (on && document.pointerLockElement) document.exitPointerLock();
+  }
   openChat() { this.chatOpen = true; this.keys = {}; const i = $('chatinput'); i.hidden = false; i.value = ''; i.focus(); }
   closeChat() { this.chatOpen = false; const i = $('chatinput'); i.hidden = true; i.blur(); }
 
   onKey(e, down) {
-    if (this.chatOpen || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (this.chatOpen || this.offline || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (this.ui.blocked()) return;
     const c = e.code;
     if (c === 'Tab') { e.preventDefault(); $('notebook').hidden = !down; return; }
@@ -314,7 +395,7 @@ export class Game {
   }
   /** As the Headmaster: a sound someone made, shown as a pulse you can see through walls. */
   showHeard(e) {
-    const col = { voice: 0xffe070, bottle: 0xffa040, trap: 0xff3020 }[e.k] || 0xdfe6ff;
+    const col = { voice: 0xffe070, bottle: 0xffa040, trap: 0xff3020, revive: 0xff6050 }[e.k] || 0xdfe6ff;
     const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.T.glow, color: col, transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending }));
     dot.position.set(e.p[0], e.p[1] + 0.9, e.p[2]); dot.renderOrder = 20; this.scene.add(dot);
     let t = 0; const life = e.k === 'trap' ? 4 : 2.2;
@@ -329,13 +410,15 @@ export class Game {
     const frozen = this.ended || h.grace > 0 || this.mbusy > 0;
     let fwd = 0, strafe = 0;
     if (!frozen && !this.chatOpen && !this.ui.blocked()) { fwd = (K.KeyW || K.ArrowUp ? 1 : 0) - (K.KeyS || K.ArrowDown ? 1 : 0); strafe = (K.KeyD || K.ArrowRight ? 1 : 0) - (K.KeyA || K.ArrowLeft ? 1 : 0); }
-    const rage = (K.ShiftLeft || K.ShiftRight) && fwd > 0 && h.rage > 0.03 && !(h.slow > 0) && !(h.stun > 0);
+    let mag = 1;
+    if (!frozen) { const [pf, ps] = this.padMove(); const pm = Math.hypot(pf, ps); if (pm > Math.hypot(fwd, strafe) * 0.5 && pm > 0) { fwd = pf; strafe = ps; mag = Math.min(1, pm); } }
+    const rage = (K.ShiftLeft || K.ShiftRight || (input.connected && input.held(BTN.LT))) && fwd > 0.35 && h.rage > 0.03 && !(h.slow > 0) && !(h.stun > 0);
     let speed = rage ? H.rage : H.walk;
     if (h.stun > 0) speed = H.walk * 0.3; else if (this.mwind > 0) speed *= 0.8; else if (h.slow > 0) speed = H.walk * 0.5;
-    if (fwd < 0) speed *= BACKPEDAL; else if (fwd === 0 && strafe !== 0) speed *= STRAFE;
+    if (fwd < 0) speed *= BACKPEDAL; else if (Math.abs(strafe) > fwd) speed *= STRAFE;
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     let wx = -sy * fwd + cy * strafe, wz = -cy * fwd - sy * strafe;
-    const wl = Math.hypot(wx, wz); if (wl > 0) { wx = (wx / wl) * speed; wz = (wz / wl) * speed; }
+    const wl = Math.hypot(wx, wz); if (wl > 0) { wx = (wx / wl) * speed * mag; wz = (wz / wl) * speed * mag; }
     const acc = Math.min(1, dt * 11);
     this.vx += (wx - this.vx) * acc; this.vz += (wz - this.vz) * acc;
     ph.setCrouch(false);
@@ -410,6 +493,35 @@ export class Game {
     }
     this.s.emit('g:ping', { x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2) });
   }
+  markColor(by) { const p = this.roster.get(by); return PLAYER_COLORS[(p ? p.color : 7) % 8]; }
+  /** Thomas's thanks: every objective item lying around glows through the walls for a while */
+  reveal(items, secs) {
+    for (const [type, x, y, z] of items) {
+      const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.T.glow, color: 0xbfe8ff, transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending }));
+      const tex = nameTexture(ITEM_INFO[type][0], '#bfe8ff');
+      const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }));
+      dot.position.set(x, y, z); label.position.set(x, y, z); dot.renderOrder = 20; label.renderOrder = 21;
+      this.scene.add(dot, label);
+      let t = 0;
+      this.fx.push((dt) => {
+        t += dt;
+        const d = this.cam.position.distanceTo(dot.position), sc = 0.22 + d * 0.04, fade = Math.min(1, (secs - t) * 0.8, t * 2);
+        dot.scale.setScalar(sc * (1 + Math.sin(t * 4) * 0.2)); dot.material.opacity = 0.75 * fade;
+        label.scale.set(sc * 3.2, sc * 0.8, 1); label.position.y = y + sc * 0.85; label.material.opacity = 0.9 * fade;
+        if (t > secs) { this.scene.remove(dot, label); dot.material.dispose(); tex.dispose(); label.material.dispose(); return true; }
+      });
+    }
+    this.toast(`For ${secs} seconds you can see where the objective items are.`, 'good');
+  }
+  /** the school's public-address system, in a voice nobody should have */
+  speakPA(text) {
+    try {
+      if (!('speechSynthesis' in window) || this.audio.muted) return;
+      const u = new SpeechSynthesisUtterance(text);
+      u.pitch = 0.1; u.rate = 0.78; u.volume = Math.min(1, (this.set.vol ?? 0.8) * 0.9);
+      setTimeout(() => { try { window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); } catch { /* no voice: the text toast is enough */ } }, 1300);
+    } catch { /* ignore */ }
+  }
   showPing(e) {
     const p = this.roster.get(e.by), name = p ? p.name : '?';
     const color = PLAYER_COLORS[(p ? p.color : 7) % 8];
@@ -442,8 +554,11 @@ export class Game {
     const it = this.inv[this.sel];
     if (!it) return;
     if (it.type === 'bottle') this.audio.throwWhoosh();
-    if (['bottle', 'bell', 'battery', 'medkit'].includes(it.type)) this.vm.useItem(it.type);
-    this.s.emit('g:use', { slot: this.sel, ry: this.yaw, rx: this.pitch });
+    if (['bottle', 'bell', 'battery', 'medkit', 'camera', 'soda', 'chalk'].includes(it.type)) this.vm.useItem(it.type === 'camera' ? 'bell' : it.type);
+    if (it.type === 'alarm') this.vm.reach();
+    const K = this.keys, [plx, ply] = input.connected ? input.axes : [0, 0];
+    const sym = K.KeyA || plx < -0.5 ? 1 : K.KeyD || plx > 0.5 ? 2 : K.KeyS || ply > 0.5 ? 3 : 0; // chalk: X, or an arrow, or a warning
+    this.s.emit('g:use', { slot: this.sel, ry: this.yaw, rx: this.pitch, sym });
   }
   interact() {
     if (this.role === 'monster') {
@@ -505,13 +620,14 @@ export class Game {
       case 'msg': this.toast(e.text, e.kind); if (e.kind === 'warn') A.deny(); break;
       case 'note': this.notes.push(e.text); this.renderNotebook(); break;
       case 'pstate': this.onPlayerState(e); break;
+      case 'away': { const p = this.roster.get(e.id); if (p) { p.away = !!e.on; this.renderTeam(); } break; }
       case 'pleave': {
         const r = this.remotes.get(e.id);
         if (r) { this.scene.remove(r.model.group); r.model.dispose(); this.remotes.delete(e.id); }
-        this.roster.delete(e.id); if (this.spec === e.id) this.spec = null; this.renderTeam(); break;
+        this.roster.delete(e.id); if (this.spec === e.id) { this.spec = null; if (this.me.state === 'dead' || this.me.state === 'escaped') this.cycleSpectate(); } this.renderTeam(); break;
       }
       case 'hit':
-        if (e.id === this.id) { A.hit(); this.shake = 1; this.hurtFlash = 1; this.jumpscare(this.me.hp <= 1, true); }
+        if (e.id === this.id) { A.hit(); this.shake = 1; this.hurtFlash = 1; this.jumpscare(this.me.hp <= 1, true); input.rumble(1, 0.8, this.me.hp <= 1 ? 700 : 420); }
         else { const r = this.remotes.get(e.id); if (r) { A.noise({ dur: 0.3, freq: 400, gain: 1.4, pos: [r.cur.x, r.cur.y + 1, r.cur.z] }); A.tone({ freq: 520, to: 300, dur: 0.5, type: 'sawtooth', gain: 0.2, pos: [r.cur.x, r.cur.y + 1.5, r.cur.z], vibrato: 30 }); } }
         break;
       case 'hide': {
@@ -555,6 +671,34 @@ export class Game {
         if (t) { if (e.by) { A.clang(t.pos, 1.2); A.noise({ dur: 0.1, type: 'highpass', freq: 2500, gain: 1.4, pos: t.pos }); } this.scene.remove(t.mesh); this.traps.delete(e.id); }
         break;
       }
+      case 'photo': {
+        A.photo(e.by === this.id ? null : e.p); W.flashAt(e.p);
+        if (e.by === this.id) { const fl = $('fx-flash'); fl.style.transition = 'none'; fl.style.opacity = 0.35; requestAnimationFrame(() => { fl.style.transition = 'opacity 0.4s'; fl.style.opacity = 0; }); }
+        break;
+      }
+      case 'soda': this.sodaT = e.t; this.toast(`Sugar rush: you can sprint as long as you like for ${e.t} seconds.`, 'good'); break;
+      case 'sfx': if (e.k === 'can') A.can(e.p); break;
+      case 'alarm': W.addAlarm(e); A.alarm(e.p, e.delay, e.dur); break;
+      case 'chalk': W.addMark(e, this.markColor(e.by)); A.chalk(e.p); break;
+      case 'chalk-': W.removeMark(e.id); break;
+      case 'ghost': this.teddyDone = true; W.ghost(e.p); A.ghostThanks(e.p); this.renderNotebook(); break;
+      case 'reveal': this.reveal(e.items, e.t); break;
+      case 'rollcall': {
+        this.roll = { id: e.id, until: this.time + e.t };
+        A.pa(); this.speakPA(`${e.name}. Report to the Principal's office. Immediately.`);
+        if (e.id === this.id) this.toast('The Headmaster has called your name. For 30 seconds he has a rough idea where you are. Hide, or keep moving.', 'bad');
+        else this.toast(`Roll call: the Headmaster wants ${e.name}. Stay away from them, or help them hide.`, 'warn');
+        break;
+      }
+      case 'rollend': this.roll = null; break;
+      case 'finalbell': {
+        this.final = { until: this.time + e.t }; this.roll = null;
+        W.setAlarm(true); this.shake = Math.max(this.shake, 0.6);
+        for (let i = 0; i < 3; i++) setTimeout(() => A.schoolBell(null), i * 1600);
+        A.siren(e.t);
+        break;
+      }
+      case 'gateslam': input.rumble(0.7, 0.5, 600); this.final = null; A.stopSiren(); A.gate([4.5, 1.2, 22.5]); A.stinger(); this.shake = 1; W.setAlarm(false); break;
       case 'adrenaline': this.boostT = e.t; this.stamina = Math.max(this.stamina, 60); this.exhausted = false; this.toast('Adrenaline. RUN.', 'bad'); break;
       case 'rooted': this.rootT = e.t; this.shake = 1; this.hurtFlash = 0.5; this.toast('A trap! You are held fast.', 'bad'); break;
       case 'sabotage': {
@@ -577,9 +721,14 @@ export class Game {
     const p = this.roster.get(e.id); if (!p) return;
     const prev = p.state;
     p.state = e.state; p.hp = e.hp; if (e.state !== 'alive') p.hidden = -1;
+    if (e.downs !== undefined) p.downs = e.downs;
     if (e.id === this.id) {
       if (e.state === 'downed') { this.bleed = e.bleed || 80; }
-      if (e.state === 'alive' && prev === 'downed') { this.audio.heal(); }
+      if (e.state === 'alive' && prev === 'downed') {
+        this.audio.heal();
+        const left = this.maxDowns - (p.downs || 0);
+        this.toast(left <= 0 ? 'Back on your feet, barely. If you go down again, you will not get up.' : `Back on your feet. Next time you go down you bleed out twice as fast${left === 1 ? ', and after that there is no getting up' : ''}.`, left <= 0 ? 'bad' : 'warn');
+      }
       if (e.state === 'alive' && e.hp === this.maxHp && prev === 'alive') this.audio.heal();
       if (e.state === 'dead' || e.state === 'escaped') { $('fx-locker').classList.remove('on'); this.cycleSpectate(); }
     } else if (this.spec === e.id && e.state !== 'alive' && e.state !== 'downed') this.cycleSpectate();
@@ -662,6 +811,7 @@ export class Game {
     const dt = Math.min(0.2, raw); // long frames are sub-stepped in the physics below, so low FPS never means slow motion
     this.clock = now; this.time += dt;
     if (dt <= 0) return;
+    input.poll(); this.padFrame(dt);
     if (this.role === 'monster') this.updateHunter(dt); else this.updateLocal(dt);
     this.updateRemotes(dt, now);
     this.updateMonster(dt, now);
@@ -716,23 +866,33 @@ export class Game {
     const downed = me.state === 'downed';
     let fwd = 0, strafe = 0;
     if (controllable && !this.chatOpen && !this.ui.blocked()) { fwd = (K.KeyW || K.ArrowUp ? 1 : 0) - (K.KeyS || K.ArrowDown ? 1 : 0); strafe = (K.KeyD || K.ArrowRight ? 1 : 0) - (K.KeyA || K.ArrowLeft ? 1 : 0); }
+    // the left stick: how far you push it is how fast you walk
+    let mag = 1;
+    if (controllable) { const [pf, ps] = this.padMove(); const pm = Math.hypot(pf, ps); if (pm > Math.hypot(fwd, strafe) * 0.5 && pm > 0) { fwd = pf; strafe = ps; mag = Math.min(1, pm); } }
+    if (fwd < 0.3) this.padSprint = false;
     if (this.rootT > 0) { this.rootT -= dt; fwd = 0; strafe = 0; } // caught in one of his traps
-    const wantCrouch = downed || (this.set.togglecrouch ? this.crouchLatch : K.ControlLeft || K.ControlRight || K.KeyC);
+    if (downed) this.padCrouch = false;
+    const wantCrouch = downed || this.padCrouch || (this.set.togglecrouch ? this.crouchLatch : K.ControlLeft || K.ControlRight || K.KeyC);
     if (this.exhausted && !downed) { this.pantT = (this.pantT || 0) - dt; if (this.pantT <= 0) { this.pantT = 0.62; this.audio.pant(); } }
     const crouch = controllable && (wantCrouch || (ph.isCrouched() && ph.lowCeiling()));
     if (controllable) ph.setCrouch(!!crouch);
     const moving = fwd !== 0 || strafe !== 0;
-    const sprint = !crouch && !downed && (K.ShiftLeft || K.ShiftRight) && fwd > 0 && !this.exhausted && this.stamina > 0;
-    if (sprint && moving) { this.stamina = Math.max(0, this.stamina - 19 * dt); this.regenDelay = 0.9; if (this.stamina <= 0) this.exhausted = true; }
+    const padRun = input.connected && (input.held(BTN.LT) || this.padSprint) && me.hidden < 0;
+    const sprint = !crouch && !downed && (K.ShiftLeft || K.ShiftRight || padRun) && fwd > 0.35 && !this.exhausted && this.stamina > 0;
+    const tireless = this.mods.has('sportsday') || this.sodaT > 0;
+    if (this.sodaT > 0) this.sodaT -= dt;
+    const ath = this.cls === 'athlete';
+    if (sprint && moving && !tireless) { this.stamina = Math.max(0, this.stamina - (ath ? 14.3 : 19) * dt); this.regenDelay = ath ? 0.7 : 0.9; if (this.stamina <= 0) this.exhausted = true; }
+    else if (tireless) { this.stamina = 100; this.exhausted = false; }
     else { this.regenDelay -= dt; if (this.regenDelay <= 0) this.stamina = Math.min(100, this.stamina + 13 * dt); if (this.exhausted && this.stamina > 30) this.exhausted = false; }
     let speed = downed ? 0.75 : crouch ? 1.45 : sprint ? 5.3 : 2.75;
     if (me.hp === 1 && !downed) speed *= 0.9;
     // you cannot walk backwards (or crab sideways) as fast as you walk forwards
-    if (!downed) { if (fwd < 0) speed *= BACKPEDAL; else if (fwd === 0 && strafe !== 0) speed *= STRAFE; }
+    if (!downed) { if (fwd < 0) speed *= BACKPEDAL; else if (Math.abs(strafe) > fwd) speed *= STRAFE; }
     if (this.boostT > 0) { this.boostT -= dt; if (!downed) speed *= 1.25; } // adrenaline after a hit (Hunt Mode)
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     let wx = -sy * fwd + cy * strafe, wz = -cy * fwd - sy * strafe;
-    const wl = Math.hypot(wx, wz); if (wl > 0) { wx = (wx / wl) * speed; wz = (wz / wl) * speed; }
+    const wl = Math.hypot(wx, wz); if (wl > 0) { wx = (wx / wl) * speed * mag; wz = (wz / wl) * speed * mag; }
     const acc = Math.min(1, dt * 11);
     this.vx += (wx - this.vx) * acc; this.vz += (wz - this.vz) * acc;
     if (controllable) { const n = Math.ceil(dt / 0.034); for (let i = 0; i < n; i++) ph.move(this.vx, this.vz, dt / n); }
@@ -777,8 +937,8 @@ export class Game {
     const inLocker = me.hidden >= 0 && me.state === 'alive' && !this.ended;
     if (inLocker) {
       // hold SPACE to hold your breath while he checks your locker
-      if (K.Space && !this.gaspLock && this.breath > 0) {
-        this.holding = true; this.breath = Math.max(0, this.breath - dt / BREATH_SECS);
+      if ((K.Space || (input.connected && (input.held(BTN.LT) || input.held(BTN.DOWN)))) && !this.gaspLock && this.breath > 0) {
+        this.holding = true; this.breath = Math.max(0, this.breath - dt / (BREATH_SECS * (this.cls === 'sneak' ? 1.5 : 1)));
         this.hbT2 -= dt; if (this.hbT2 <= 0) { this.hbT2 = 0.78 - (1 - this.breath) * 0.38; this.audio.heartbeat(0.5 + (1 - this.breath) * 0.7); }
         if (this.breath <= 0) { this.holding = false; this.gaspLock = true; this.audio.gasp(null); this.s.emit('g:gasp'); this.toast('You gasp for air.', 'bad'); this.shake = 0.5; }
       } else { this.holding = false; this.breath = Math.min(1, this.breath + dt / 5); if (this.gaspLock && this.breath > 0.4) this.gaspLock = false; }
@@ -842,7 +1002,9 @@ export class Game {
       r.model.setHeld(c.h);
       r.model.update(dt, { speed: r.speed, crouch: !!(c.f & 1), downed: p.state === 'downed', pitch: c.rx, flash, hurt: p.hp < this.maxHp && p.state === 'alive' });
       const d = Math.hypot(c.x - this.cam.position.x, c.z - this.cam.position.z);
-      r.model.tag.material.opacity = d < 14 ? 0.85 : Math.max(0, 0.85 - (d - 14) * 0.2);
+      // the tag keeps a steady on-screen size up close (instead of filling the view) and fades when they are right next to you
+      const ts = clamp(d / 4.5, 0.3, 1); r.model.tag.scale.set(1.3 * ts, 0.325 * ts, 1);
+      r.model.tag.material.opacity = d < 1.4 ? 0.85 * clamp((d - 0.6) / 0.8, 0, 1) : d < 14 ? 0.85 : Math.max(0, 0.85 - (d - 14) * 0.2);
       r.model.tag.visible = this.role !== 'monster'; // no name tags floating over his prey
       if (flash) lit.push({ r, d });
       // their footsteps
@@ -903,7 +1065,7 @@ export class Game {
     const canLight = (me.state === 'alive' || me.state === 'downed') && me.hidden < 0;
     if (this.flashOn && canLight && this.battery > 0) {
       const before = this.battery;
-      this.battery = Math.max(0, this.battery - (100 / 360) * dt);
+      this.battery = Math.max(0, this.battery - (100 / 360) * dt * (this.mods.has('blackout') ? 2 : 1));
       if (before >= 15 && this.battery < 15) { this.toast('Torch battery is low.', 'warn'); this.audio.beep(); }
       if (this.battery <= 0) { this.toast('Your torch is dead. Find a battery.', 'warn'); this.audio.click(); }
     }
@@ -981,7 +1143,7 @@ export class Game {
         for (const L of MAP.lockers) consider('locker', L.id, L.x + 0.5, L.y + 1.2, L.z + 0.5, 2.4, 'Rip the locker open');
       }
       this.target = best;
-      const text = best ? `<kbd>E</kbd> ${esc(best.label)}` : '';
+      const text = best ? `${glyph('force')} ${esc(best.label)}` : '';
       if (text !== this._prompt) { this._prompt = text; $('prompt').innerHTML = text; }
       return;
     }
@@ -1007,7 +1169,11 @@ export class Game {
         consider('door', d.id, d.x + 0.5, y, d.z + 0.5, 2.5, label, true);
       }
       for (const it of this.world.items.values()) consider('item', it.id, it.x, it.y, it.z, 2.4, `Pick up ${ITEM_INFO[it.type][0]}`);
-      for (const L of MAP.lockers) consider('locker', L.id, L.x + 0.5, L.y + 1.2, L.z + 0.5, 2.1, 'Hide in locker');
+      const holdsTeddy = !this.teddyDone && this.inv.some((it) => it && it.type === 'teddy');
+      for (const L of MAP.lockers) {
+        if (L.id === MAP.thomasLocker && holdsTeddy) { consider('teddy', L.id, L.x + 0.5, L.y + 1.2, L.z + 0.5, 2.3, "Put Thomas's teddy back in his locker"); continue; }
+        consider('locker', L.id, L.x + 0.5, L.y + 1.2, L.z + 0.5, 2.1, L.id === MAP.thomasLocker && !this.teddyDone ? 'Hide in locker (T. PETERS)' : 'Hide in locker');
+      }
       const fb = MAP.fuseBox; if (!this.obj.power) consider('fusebox', 0, fb.x, fb.y, fb.z - 0.1, 2.7, `Fuse box (${this.obj.fuses}/3)${this.inv.some((i) => i && i.type === 'fuse') ? ' — fit a fuse' : ''}`);
       const sc = MAP.securityConsole; if (!this.obj.security) consider('console', 0, sc.x, sc.y, sc.z, 2.7, this.obj.power ? 'Disarm the gate lock' : 'Security console (no power)');
       for (const r of this.remotes.values()) { const p = this.roster.get(r.id); if (p && p.state === 'downed' && r.visible) consider('revive', r.id, r.cur.x, r.cur.y + 0.3, r.cur.z, 2.5, `Revive ${p.name}`); }
@@ -1017,7 +1183,7 @@ export class Game {
       }
     }
     this.target = best;
-    const text = me.hidden >= 0 && me.state === 'alive' ? (this.inspectMine > 0 && !this.holding ? '<b class="urgent">He is checking this locker. HOLD <kbd>SPACE</kbd></b>' : this.holding ? '<b class="urgent">Holding your breath…</b>' : '<kbd>E</kbd> Climb out · hold <kbd>Space</kbd> to hold your breath') : best ? `<kbd>E</kbd> ${esc(best.label)}` : '';
+    const text = me.hidden >= 0 && me.state === 'alive' ? (this.inspectMine > 0 && !this.holding ? `<b class="urgent">He is checking this locker. HOLD ${glyph('breath')}</b>` : this.holding ? '<b class="urgent">Holding your breath…</b>' : `${glyph('interact')} Climb out · hold ${glyph('breath')} to hold your breath`) : best ? `${glyph('interact')} ${esc(best.label)}` : '';
     if (text !== this._prompt) { this._prompt = text; $('prompt').innerHTML = text; }
   }
 
@@ -1037,9 +1203,9 @@ export class Game {
     setTimeout(() => el.remove(), 12100);
   }
   renderInv() {
-    $('inv').innerHTML = this.inv.map((it, i) => `<div class="slot${i === this.sel ? ' sel' : ''}"><span class="num">${i + 1}</span>${it ? `<span class="ico">${ITEM_INFO[it.type][1]}</span>${ITEM_INFO[it.type][0]}` : ''}</div>`).join('');
+    $('inv').innerHTML = this.inv.map((it, i) => `<div class="slot${i === this.sel ? ' sel' : ''}"><span class="num">${i + 1}</span>${it ? `<span class="ico">${ITEM_INFO[it.type][1]}</span>${ITEM_INFO[it.type][0]}${it.n !== undefined && it.n !== null ? ` <b class="charges">${it.n}</b>` : ''}` : ''}</div>`).join('');
     const cur = this.inv[this.sel];
-    $('itemhint').textContent = cur ? (ITEM_HINT[cur.type] || ITEM_INFO[cur.type][0]) + DROP_HINT : '';
+    $('itemhint').textContent = cur ? fill((cur.type === 'chalk' && input.mode === 'pad' ? CHALK_PAD : ITEM_HINT[cur.type] || ITEM_INFO[cur.type][0]) + DROP_HINT) : '';
   }
   renderNotebook() {
     const o = this.obj;
@@ -1055,13 +1221,22 @@ export class Game {
     const now = cur >= 0 ? `▸ ${list[cur][0]}` : '▸ The gate is open. Get out.';
     const on = $('objnow');
     if (on.textContent !== now) { on.textContent = now; on.classList.add('new'); setTimeout(() => on.classList.remove('new'), 3000); }
-    $('objectives').innerHTML = list.map(([t, done], i) => `<li class="${done ? 'done' : i === cur ? 'cur' : ''}">${esc(t)}</li>`).join('');
+    $('objectives').innerHTML = list.map(([t, done], i) => `<li class="${done ? 'done' : i === cur ? 'cur' : ''}">${esc(t)}</li>`).join('')
+      + `<li class="side${this.teddyDone ? ' done' : ''}">Optional: find Thomas's teddy bear and put it back in his locker (Locker Room)</li>`
+      + (this.mods.size ? `<li class="side rules">Detention rules: ${[...this.mods].map((k) => MOD_LABEL[k]).join(', ')}</li>` : '');
     $('notes').innerHTML = this.notes.length ? this.notes.map((n) => `<p>${esc(n)}</p>`).join('') : '<p class="dim">Nothing yet. Notes are shared with everyone when picked up.</p>';
   }
   renderTeam() {
-    $('teamlist').innerHTML = [...this.roster.values()].map((p) => `<div class="${p.state}">${this.voice && this.voice.enabled && this.voice.speakers(this.id).has(p.id) ? '🎙 ' : ''}${esc(p.name)}${p.id === this.id ? ' (you)' : ''}${p.state === 'downed' ? ' — DOWN' : p.state === 'escaped' ? ' — OUT' : p.state === 'alive' && p.hp < this.maxHp ? ' — hurt' : ''}</div>`).join('');
+    $('teamlist').innerHTML = [...this.roster.values()].map((p) => `<div class="${p.state}">${this.voice && this.voice.enabled && this.voice.speakers(this.id).has(p.id) ? '🎙 ' : ''}<span title="${CLASSES[p.cls] ? CLASSES[p.cls].label : ''}">${CLASSES[p.cls] ? CLASSES[p.cls].icon : ''}</span> ${esc(p.name)}${p.id === this.id ? ' (you)' : ''}${p.away && (p.state === 'alive' || p.state === 'downed') ? ' — connection lost' : p.state === 'downed' ? ' — DOWN' : p.state === 'escaped' ? ' — OUT' : p.state === 'alive' && p.hp < this.maxHp ? ' — hurt' : ''}${(p.state === 'alive' || p.state === 'downed') && p.downs ? ` <i class="falls" title="Fallen ${p.downs} of ${this.maxDowns + 1}">${'●'.repeat(p.downs)}${'○'.repeat(Math.max(0, this.maxDowns - p.downs))}</i>` : ''}</div>`).join('');
   }
   updateHud() {
+    // class perks the HUD has to show: a reminder at the start, and the Mechanic's feel for fuses through walls
+    if (this.cls && !this.clsShown && this.time > 2.5) { this.clsShown = true; const c = CLASSES[this.cls]; this.toast(`${c.icon} You are the ${c.label}. ${c.blurb}`, 'info'); }
+    if (this.cls === 'mechanic') for (const it of this.world.items.values()) {
+      if (it.type !== 'fuse') continue;
+      const near = this.cam.position.distanceTo(it.mesh.position) < 12;
+      if (it.glow.material.depthTest === near) { it.glow.material.depthTest = !near; it.glow.renderOrder = near ? 15 : 0; it.glow.scale.setScalar(near ? 1.1 : 0.55); }
+    }
     const me = this.me;
     // voice: microphone state, and who is talking
     if (this.voice) {
@@ -1071,12 +1246,12 @@ export class Game {
       const sp = v.enabled ? [...v.speakers(this.id)].sort().join(',') : '';
       if (sp !== this._sp) { this._sp = sp; this.renderTeam(); }
     }
-    while (this.tips.length && this.time >= this.tips[0][0]) this.toast(this.tips.shift()[1]);
+    while (this.tips.length && this.time >= this.tips[0][0]) this.toast(fill(this.tips.shift()[1]));
     if (this.role === 'monster') {
       const h = this.mh, cd = (v) => (v > 0 ? `${Math.ceil(v)}s` : 'READY');
       $('bar-stamina').querySelector('i').style.width = `${h.rage * 100}%`;
       $('mhud').innerHTML = `<div class="mstat">${h.grace > 0 ? `FROZEN ${Math.ceil(h.grace)}s` : h.stun > 0 ? 'BLINDED' : h.slow > 0 ? 'SLOWED' : 'HUNTING'}</div>`
-        + `<div><kbd>LMB</kbd> Attack <b>${cd(h.atk)}</b></div><div><kbd>R</kbd> Teleport <b>${cd(h.tp)}</b></div><div><kbd>T</kbd> Trap ${h.traps}/${this.hunt.trapMax} <b>${cd(h.trap)}</b></div><div><kbd>Q</kbd> Kill lights <b>${cd(h.lights)}</b></div>`
+        + `<div>${glyph('attack')} Attack <b>${cd(h.atk)}</b></div><div>${glyph('teleport')} Teleport <b>${cd(h.tp)}</b></div><div>${glyph('trap')} Trap ${h.traps}/${this.hunt.trapMax} <b>${cd(h.trap)}</b></div><div>${glyph('lights')} Kill lights <b>${cd(h.lights)}</b></div>`
         + (h.torch > 0.15 ? '<div class="mstat">A torch is on your face!</div>' : '');
       return;
     }
@@ -1085,13 +1260,28 @@ export class Game {
     ts.textContent = lit ? 'ON' : this.battery <= 0 ? 'DEAD' : 'OFF'; ts.classList.toggle('off', !lit);
     st.querySelector('i').style.width = `${this.stamina}%`; st.classList.toggle('low', this.exhausted);
     bt.querySelector('i').style.width = `${this.battery}%`; bt.classList.toggle('low', this.battery < 14);
-    const h = $('health'); h.textContent = me.state === 'alive' ? (me.hp >= this.maxHp ? (this.maxHp === 1 ? 'One hit and you fall' : 'Unhurt') : me.hp === 1 ? 'Wounded — one more and you fall' : 'Hurt') : ''; h.classList.toggle('hurt', me.hp < this.maxHp);
+    const h = $('health'), falls = me.downs || 0;
+    h.textContent = me.state === 'alive' ? (me.hp >= this.maxHp ? (this.maxHp === 1 ? 'One hit and you fall' : 'Unhurt') : me.hp === 1 ? 'Wounded — one more and you fall' : 'Hurt')
+      + (falls >= this.maxDowns ? ' · no more chances' : falls ? ` · ${falls === 1 ? 'fallen once' : `fallen ${falls}×`}` : '') : '';
+    h.classList.toggle('hurt', me.hp < this.maxHp || falls >= this.maxDowns);
     let status = '';
     if (this.ended) status = '';
-    else if (me.state === 'downed') status = `You are down<small>bleeding out in ${Math.ceil(this.bleed || 0)}s — a teammate can revive you with E</small>`;
-    else if (me.state === 'dead') { const p = this.roster.get(this.spec); status = `You did not make it<small>${p ? `watching ${esc(p.name)} — click to switch` : 'nobody left to watch'}</small>`; }
-    else if (me.state === 'escaped') { const p = this.roster.get(this.spec); status = `You are out<small>${p ? `watching ${esc(p.name)} — click to switch` : ''}</small>`; }
+    else if (me.state === 'downed') status = `${(me.downs || 0) >= this.maxDowns ? 'Last chance' : 'You are down'}<small>Bleeding out: ${Math.ceil(this.bleed || 0)} s. A teammate can revive you with ${glyph('interact')}.<br>${(me.downs || 0) >= this.maxDowns ? 'Go down again after this and you will not get up.' : `${glyph('ping')} calls for help, but he hears it too.`}</small>`;
+    else if (me.state === 'dead') { const p = this.roster.get(this.spec); status = `You did not make it<small>${p ? `watching ${esc(p.name)} — ${input.mode === 'pad' ? `${glyph('switch')} to switch` : 'click to switch'}` : 'nobody left to watch'}</small>`; }
+    else if (me.state === 'escaped') { const p = this.roster.get(this.spec); status = `You are out<small>${p ? `watching ${esc(p.name)} — ${input.mode === 'pad' ? `${glyph('switch')} to switch` : 'click to switch'}` : ''}</small>`; }
     if (status !== this._status) { this._status = status; $('status').innerHTML = status; }
+    if (me.state === 'downed' && (me.downs || 0) >= this.maxDowns) $('status').classList.add('last'); else $('status').classList.remove('last');
+    const rc = $('rollcall');
+    if (this.final && this.me.state !== 'escaped') {
+      const left = Math.max(0, Math.ceil(this.final.until - this.time));
+      rc.hidden = false; rc.classList.add('mine');
+      rc.innerHTML = this.role === 'monster' ? `<b>The final bell</b><span>stop them reaching the gate · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</span>` : `<b>The final bell</b><span>get out before the gate shuts · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</span>`;
+    } else if (this.roll && this.role !== 'monster') {
+      const left = Math.max(0, Math.ceil(this.roll.until - this.time)), mine = this.roll.id === this.id, who = this.roster.get(this.roll.id);
+      rc.hidden = false; rc.classList.toggle('mine', mine);
+      rc.innerHTML = mine ? `<b>Roll call: you</b><span>hide, or keep moving · ${left} s</span>` : `<b>Roll call: ${esc(who ? who.name : '?')}</b><span>${left} s</span>`;
+    } else rc.hidden = true;
+    $('toasts').classList.toggle('below-roll', !rc.hidden);
     const br = $('bar-breath'), inL = me.hidden >= 0 && me.state === 'alive';
     br.hidden = !inL; if (inL) { br.querySelector('i').style.width = `${this.breath * 100}%`; br.classList.toggle('low', this.breath < 0.3 || this.gaspLock); }
     const tb = $('tossbar'), th = this.gHeld !== null ? this.time - this.gHeld : 0;
@@ -1121,6 +1311,7 @@ export class Game {
   }
   dispose() {
     cancelAnimationFrame(this.raf);
+    if (this.unsubInput) this.unsubInput();
     for (const [el, ev, fn, opt] of this.listeners) el.removeEventListener(ev, fn, opt);
     for (const k in this.socketHandlers) this.s.off(k, this.socketHandlers[k]);
     if (document.pointerLockElement) document.exitPointerLock();
@@ -1134,7 +1325,7 @@ export class Game {
     this.vm.dispose(); this.r.shadowMap.autoUpdate = true;
     this.r.renderLists.dispose();
     try { this.ph.world.free(); } catch { /* already freed */ }
-    $('hud').hidden = true; $('fx-locker').classList.remove('on'); $('fx-static').style.display = 'none'; $('fx-hurt').style.display = 'none'; $('fps').hidden = true; $('toasts').innerHTML = ''; $('chatlog').innerHTML = ''; $('status').innerHTML = ''; $('notebook').hidden = true; $('hud').classList.remove('monster'); $('mhud').hidden = true; $('mic').hidden = true; this.amb.color.setHex(0x7486a8); $('hud').classList.remove('scare'); $('fx-flash').style.opacity = 0; $('objnow').textContent = ''; $('itemhint').textContent = '';
+    $('hud').hidden = true; $('netwarn').hidden = true; $('fx-locker').classList.remove('on'); $('fx-static').style.display = 'none'; $('fx-hurt').style.display = 'none'; $('fps').hidden = true; $('toasts').innerHTML = ''; $('chatlog').innerHTML = ''; $('status').innerHTML = ''; $('notebook').hidden = true; $('hud').classList.remove('monster'); $('mhud').hidden = true; $('mic').hidden = true; this.amb.color.setHex(0x7486a8); $('hud').classList.remove('scare'); $('fx-flash').style.opacity = 0; $('objnow').textContent = ''; $('itemhint').textContent = '';
     if (window.__lb === this) window.__lb = null;
   }
 }

@@ -10,12 +10,69 @@ An online co-op horror game for 2–8 players. You and your friends are locked i
 
 | | |
 |---|---|
-| Runs and was tested locally | Yes: 3 automated suites plus a two-browser end-to-end run (see [Testing](#testing)) |
+| Runs and was tested locally | Yes: 4 automated suites plus a two-browser end-to-end run (see [Testing](#testing)) |
 | Deployed to a public URL | **No.** It was built in a sandbox with no hosting account. Follow [Deploy](#deploy-get-a-public-link) to put it online (about 5 minutes). |
 | Tested between two physically separate PCs over the internet | **No.** Tested with separate browser processes and separate Socket.IO clients against one local server. The networking does not depend on being local, but nobody has yet played it across two networks. [Do that test](#test-between-two-separate-pcs) after deploying. |
 | Frame rate on a real GPU | **Not measured.** The sandbox has no GPU, only a software renderer. In that renderer the optimised build takes about half the time per frame that the first version did on High, but real numbers depend on your graphics card. See [Performance](#performance). |
 | Hunt Mode (player-controlled Headmaster) | Built. Rules are covered by `test/hunt.js`; balance has not been played by real groups yet. |
 | Voice chat | Built. Connection and audio flow were tested between two browsers on one machine with a fake microphone. **Not tested between real networks or by ear.** |
+
+## What is new in 1.3
+
+- **Play with an Xbox or PlayStation controller.** Plug one in or pair it with Bluetooth and press any button. Everything works with the pad:
+  - the main menu, the lobby, settings and the pause menu (the D-pad or left stick moves a highlight, A / ✕ chooses, B / ○ goes back);
+  - playing as a survivor, with analog movement: how far you push the stick is how fast you walk;
+  - playing as the Headmaster in Hunt Mode;
+  - spectating after you die.
+- **On-screen buttons follow what you are holding.** Prompts, the key strip in the corner, tips and item hints show keyboard keys, Xbox buttons (A B X Y in their colours, LB, RT, View, Menu) or PlayStation buttons (✕ ○ □ △, L1, R2, Create or Share, Options). They switch the moment you touch the other device.
+- **Controls screen: a separate Controller section.** Menu → Controls opens straight on the controller page when one is connected. It shows a drawing of the pad with every button labelled, for Xbox or PlayStation (it picks the one you have connected, or choose either). Press a button on your controller and it lights up on the drawing. The Headmaster's buttons and the menu buttons are listed underneath.
+- **Settings:** controller look speed, invert look up and down, and vibration (the controller shakes when he hits you and when the gate slams).
+- The main menu says when a controller is connected and which one.
+
+## What is new in 1.2
+
+- **Fixed: two friends could not lose.** The Headmaster walked away after every hit, even the one that put someone down, so the friend could always pick them up and the two of you could loop forever (in a simulation, a pair standing still and reviving each other survived 15 minutes on every difficulty, Nightmare included). Now:
+  - **He does not walk away from a witness.** If he puts someone down while a classmate is close by or in sight, he stands over the body for a moment and then goes for the classmate. With nobody around he still leaves, briefly, and comes back to check on the one he left behind.
+  - **Reviving is noisy.** Picking someone up makes a sound he can hear about 9 m away (a player Headmaster sees it as a red pulse).
+  - **Every fall costs more.** The second time you go down you bleed out twice as fast, and there is a limit: you can be picked up 3 times on Beginner, 2 on Intermediate, Hard and in Hunt Mode, and once on Nightmare. The next fall after that is final. The team list shows a dot per fall, and the screen says when you are on your last chance. Returning Thomas's teddy forgives one fall each.
+  - A hit that only wounds still sends him away, so the wounded get their chance to run. A player Headmaster who puts someone down is locked out for 3 s instead of 8, with no slowdown, so he can go for the rescuer.
+- **Dropped connection? You are put straight back in.** If your Wi-Fi blips, your hotspot drops or you refresh the page by accident, the game shows "Connection lost" and your place is held for 45 seconds. When you reconnect you are back in the match where you were standing, with your items. Everyone else sees that you lost your connection and when you are back. Leaving on purpose still leaves.
+- **Fixed: players 3 and 4 started inside the Main Hall lockers.** Everyone now starts side by side across the hall, so nobody begins the match staring at a classmate's back.
+- **Fixed: the room code was cut off at 720p.** Panels taller than the window used to lose their top edge (the room code and invite buttons in the lobby). Every screen now scrolls properly, and the main menu tightens up on short screens such as laptops.
+- **Name tags** keep a steady size up close instead of filling the screen when a teammate stands next to you, and fade when they are right beside you.
+- **The gate's electric lock** is now a steel magnet housing under the lintel with striker plates on the leaves, a hazard label and a status light (red locked, amber unlocked, green open). It used to be a flat red box that floated in mid-air once the gate opened.
+- **Easier to read when you are down:** the text sits on a dark backdrop, and it tells you that `Q` calls for help.
+- Smaller fixes: the Medic's revive bar now matches the Medic's faster revive; spectators switch to someone else when the player they were watching leaves; if a player Headmaster disconnects during the final bell, the AI that takes over is enraged too; the end screen says "You got out" or "They got out without you" instead of a plain "Escaped".
+
+## What is new in 1.1
+
+- **Fixed: the basketball hoops.** The gym doorways sat in the middle of the north and south walls, so both hoops hung over a door. The doorways have moved toward the corners and each hoop now has a solid wall to itself. Every other room was checked from the inside for the same kind of mistake.
+- **Smoother.** Static furniture and decoration are merged into one mesh per 12 m block of the school, clocks and exit signs share one material, and nothing beyond the fog (about 34 m) is drawn at all. The busiest view, down the Main Hall, went from 373 draw calls to 221.
+- **Rain** now falls as streaks instead of little squares.
+- **Survivor classes.** Each survivor picks one in the lobby; the rest of the lobby sees your choice next to your name.
+  - **Athlete:** sprints a third longer and gets their breath back faster.
+  - **Medic:** revives teammates twice as fast and starts with a med kit.
+  - **Mechanic:** sees fuses glowing through walls within 12 m, and opens doors without a sound.
+  - **Sneak:** footsteps carry half as far, and holds their breath 50% longer in a locker.
+- **Headmaster tuning (Hunt Mode).** The host gets five sliders in the lobby: his speed (80–120%), how far he sees in the dark (4–10 m), how far he hears (50–125% of the AI's range), his teleport, trap and lights cooldowns (50–200%), and how many hits put a survivor down (1–4, or automatic). Everyone in the lobby sees the settings; **Reset to the defaults** puts them back.
+- **The final bell.** Opening the main gate no longer ends the tension: every light in the school turns red, a siren starts, the bell rings three times, he becomes enraged (15% faster as the AI, 10% faster as a player, and the AI always has a rough idea where the nearest survivor is), and the gate slams shut again after 2 minutes. Anyone still inside, standing or downed, is lost. The countdown sits at the top of the screen.
+
+## What is new in 1.0
+
+- **Hunt Mode: the Headmaster sees less.** His night vision now fades out after about 6 m (it was 9 m, and 12 m before that), so survivors who keep their distance are hard to spot.
+- **New items:**
+  - **Polaroid camera:** flash it in his face from up to 8 m and he reels back. 3 shots. Against a player Headmaster it stuns him for 2 s, then he is dazzle-proof for 8 s.
+  - **Energy drink:** 12 seconds of unlimited stamina.
+  - **Alarm clock:** wind it up and set it down. It rings 8 seconds later and he comes to it, so you can be somewhere else by then.
+  - **Chalk:** mark the wall in front of you so your team knows what you have searched. Click for an X; hold A or D for an arrow, or S for a warning. Each mark takes your colour.
+- **Roll call (Escape Mode):** every few minutes the PA crackles and a voice calls someone's name. For 30 seconds he has a rough idea where that player is. Hiding in a locker or crouching under cover keeps you off his mind, and surviving it counts on your report card.
+- **Side quest: Thomas's teddy.** A teddy bear is hidden somewhere in the school. Put it back in Thomas's locker in the Locker Room (it has his name on it). Thomas thanks you: everyone hurt is patched up, every objective item glows through the walls for 30 seconds, and the Headmaster is driven off.
+- **Detention rules:** optional match modifiers the host can mix and match in the lobby.
+  - **One strike:** everyone goes down in one hit.
+  - **Lights out:** torches drain twice as fast, but there are extra batteries.
+  - **Restless school:** twice the ghostly happenings, roll call comes sooner, and he is 8% faster.
+  - **Sports day:** nobody runs out of stamina, but he is 12% faster.
+- **Report cards:** the end screen gives every player a graded school report (A+ to F) with what they did and a teacher's comment.
 
 ## What is new in 0.9
 
@@ -99,6 +156,7 @@ Replace the files in your GitHub repository with the new ones (on the repository
 | `MONSTER_GRACE` | *(from difficulty)* | Seconds at match start before the Headmaster can notice anyone. Overrides the difficulty's own value. |
 | `ICE_SERVERS` | *(none)* | Extra WebRTC servers for voice chat, as JSON. Only needed if some players cannot hear each other: add a TURN relay, e.g. `[{"urls":"turn:host:3478","username":"u","credential":"p"}]`. |
 | `MONSTER_SPEED` | `1` | Extra multiplier on his movement (0.5–1.5), applied on top of the chosen difficulty. |
+| `RESUME_SECS` | `45` | How long a player whose connection dropped keeps their place before they are removed from the lobby and the match. |
 
 See `.env.example`. The only client-side setting is `client/config.js`.
 
@@ -123,6 +181,9 @@ Same-network check without deploying: run `npm start` on one PC, find its local 
 4. Take the gate key from the desk.
 5. Disarm the gate's electric lock at the Security Office console (needs power).
 6. Unlock the main gate at the west end of the Main Hall and get out. The match is won if anyone escapes.
+7. Opening the gate rings **the final bell**: everyone has 2 minutes to get through it before it slams shut for good, and he is enraged the whole time. Go back for downed teammates only if there is time.
+
+**Classes.** Before the match, each survivor picks Athlete, Medic, Mechanic or Sneak in the lobby (see [What is new in 1.1](#what-is-new-in-11)). The Headmaster in Hunt Mode has no class.
 
 | Key | Action |
 |---|---|
@@ -140,6 +201,25 @@ Same-network check without deploying: run `npm start` on one PC, find its local 
 | `Enter` | Text chat |
 | `Esc` | Release the mouse / menu |
 
+**Controllers (Xbox, PlayStation 4 and 5, and most others that copy the Xbox layout).** Connect it, press any button, and play. Menu → Controls → Controller shows the same layout drawn out, with the buttons of the pad you have.
+
+| Xbox | PlayStation | Survivor | Headmaster (Hunt) |
+|---|---|---|---|
+| Left stick | Left stick | Move (push gently to walk slowly); press in to run | Move |
+| Right stick | Right stick | Look; press in to crouch | Look |
+| `LT` | `L2` | Run (hold). In a locker: hold your breath | Rage (hold) |
+| `RT` | `R2` | Use the item you hold | Attack |
+| `A` | `✕` | Doors, items, lockers, revive; switch who you watch after you die | Force doors, rip lockers open |
+| `B` | `○` | Crouch (press again to stand) | Kill the lights |
+| `X` | `□` | Tap: drop. Hold and let go: toss | Teleport |
+| `Y` | `△` | Torch on or off | Set a trap |
+| `LB` / `RB` | `L1` / `R1` | Previous / next item | |
+| D-pad up / down / left | D-pad up / down / left | Ping (when down: call for help) / hold your breath / mute your mic | |
+| `View` (hold) | `Share` or `Create` (hold), or the touchpad | Notebook | |
+| `Menu` | `Options` | Pause | Pause |
+
+In menus: the D-pad or left stick moves between buttons (left and right change sliders), `A` / `✕` chooses, `B` / `○` goes back, the right stick scrolls, and `LB` / `RB` switch tabs on the Controls screen. Typing (your name, chat) still needs a keyboard. Browsers only start sound after a click or a key press, so if you play with a controller only, click once on the page.
+
 > Browsers reserve `Ctrl`+`W` for "close tab" and pages cannot override it. Crouch with `C`, or use Settings → Toggle Fullscreen (Chrome and Edge let the game lock those keys in fullscreen). The game also asks for confirmation before a tab closes mid-match.
 
 **Voice chat.** In the lobby click **Enable Voice Chat** and allow the microphone. It needs `https://` (the deployed site) or `localhost`.
@@ -155,17 +235,19 @@ Same-network check without deploying: run `npm start` on one PC, find its local 
 
 | The Headmaster can | Limits that keep it fair |
 |---|---|
-| See in the dark (red night vision) | Only about 9 m, and no name tags over survivors |
+| See in the dark (red night vision) | Only about 6 m, and no name tags over survivors |
 | Walk at 3.05 m/s (survivors walk 2.75, sprint 5.3) | Frozen for the first 20 s |
 | Rage: 5.4 m/s while holding `Shift` | Lasts 3 s, 10 s to recharge |
-| Attack with left click | 0.6 s wind-up everyone hears; a miss costs 2 s; after a hit he cannot attack for 8 s and is slowed for 4.5 s, and the survivor gets 2.5 s of adrenaline; he cannot hit downed players |
+| Attack with left click | 0.6 s wind-up everyone hears; a miss costs 2 s; after a hit that wounds he cannot attack for 8 s and is slowed for 4.5 s, and the survivor gets 2.5 s of adrenaline; after a hit that puts someone down, 3 s and no slowdown; he cannot hit downed players |
 | Hear footsteps, doors, voices, bottles as pulses through walls | Over 75 % of the AI's hearing range, and the pulse is up to 1.5 m off; crouch-walking is silent beyond about a metre; bottles and lures make decoy pulses |
 | Teleport 6 m forward (`R`) | 40 s cooldown, not through walls or closed doors, no strike for 2 s after |
 | Set traps (`T`), up to 2 | Arm after 2 s; hold for 1.8 s and do no damage; crouch-walking over one is safe; not allowed near the exit |
 | Kill the lights (`Q`): torches near him die for a moment | 70 s cooldown, torches out for 1.6 s |
 | Force doors and rip open lockers (`E`) | Doors take 0.75 s and he cannot close them; a locker takes 1.8 s standing still, and a survivor holding their breath inside goes unnoticed half the time |
 
-Survivors can blind him for 3 s by holding a torch beam on his face for 0.8 s (then he is immune for 10 s), and the hand bell stuns him for 7 s. With one or two survivors, they get three hits instead of two. All of these numbers are in one block at the top of `server/hunter.js`.
+Survivors can blind him for 3 s by holding a torch beam on his face for 0.8 s (then he is immune for 10 s), the hand bell stuns him for 7 s, and a camera flash stuns him for 2 s (then he is dazzle-proof for 8 s). With one or two survivors, they get three hits instead of two. All of these numbers are in one block at the top of `server/hunter.js`.
+
+The table shows the defaults. The host can change five of them in the lobby without touching code (**Headmaster tuning**): his walk and rage speed, how far his night vision reaches, how far he hears, his three cooldowns, and how many hits put a survivor down. When the gate opens he is enraged until the final bell ends: he moves 10% faster, his rage refills at once and it recharges twice as fast.
 
 **Difficulty** is chosen by the host in the lobby (Escape mode only):
 
@@ -174,12 +256,13 @@ Survivors can blind him for 3 s by holding a torch beam on his face for 0.8 s (t
 | His chase speed at the start (you sprint at 5.3 m/s) | 3.9 | 4.6 | 4.9 | 5.3 |
 | Hits before you go down | 3 | 2 | 2 | 1 |
 | Time to revive a downed player | 110 s | 80 s | 60 s | 45 s |
+| Times you can be picked up (every fall after the first bleeds out twice as fast) | 3 | 2 | 2 | 1 |
 | Supplies | more | normal | fewer | scarce |
 | Predicts where you ran; patrols near your current objective | – | yes | yes | yes |
 | Cuts you off in long chases, looks under tables, guards downed players, returns to where he lost you, learns which lockers you use, targets the wounded | – | – | yes | yes |
 | Thrown bottles | always fooled | always fooled | fooled once, then often walks to the thrower | walks straight to the thrower |
 
-**The Headmaster** patrols unpredictably, hears footsteps (running carries far, crouching barely at all), doors, dropped and thrown objects, and investigates. He sees further when your torch is on or the lights are powered, and poorly if you crouch in the dark or under a table. He opens doors (which slows him), searches after losing you, sometimes checks lockers — and always checks the one he watched you climb into. He gets faster and more persistent with every objective you complete. One hit wounds you, a second puts you down; teammates have 80 seconds to revive you with `E` (4 seconds) or a med kit (instant).
+**The Headmaster** patrols unpredictably, hears footsteps (running carries far, crouching barely at all), doors, dropped and thrown objects, and investigates. He sees further when your torch is on or the lights are powered, and poorly if you crouch in the dark or under a table. He opens doors (which slows him), searches after losing you, sometimes checks lockers — and always checks the one he watched you climb into. He gets faster and more persistent with every objective you complete. One hit wounds you, a second puts you down; teammates have 80 seconds to revive you with `E` (4 seconds, and noisy) or a med kit (instant). If he puts you down while a teammate is nearby, he goes for them next. Each fall after the first bleeds out twice as fast, and past the difficulty's limit you do not get up.
 
 **Items:** fuses, office key, gate key, batteries (torch lasts ~6 minutes each), med kit (the Nurse's Office always has one), lockpick, glass bottles (throw to make noise somewhere else), hand bell (drives him off for a few seconds, one use), notes (clues to where things are and how to survive; shared with the whole team). Tap `G` to drop the item in your hand, hold `G` and let go to toss it.
 
@@ -207,8 +290,8 @@ Built: four difficulty levels; jumpscares; team pings; an on-screen current obje
 
 Not built, or simplified:
 
-- **No reconnecting into a running match.** If you drop, your items fall where you stood and you can rejoin the lobby for the next round.
-- **No gamepad or touch controls** (keyboard and mouse only).
+- **Reconnecting is limited to 45 seconds** (`RESUME_SECS`), and only in the same browser tab (the seat is remembered in that tab). After that, your items fall where you stood and you can rejoin the lobby with the code for the next round. A server restart still ends every match.
+- **No touch controls.** Controllers work (see above); phones and tablets do not. A controller with a non-standard button layout in an unusual browser may have its buttons in the wrong places.
 - **Characters are built from primitive shapes** and animated in code; there are no modelled or motion-captured assets. Textures are painted procedurally at load time.
 - **Basement is reached by stairs but the map is one navigation layer** (no rooms stacked on top of each other).
 - **Movement is client-side with server sanity checks** (speed and wall checks), which is normal for co-op but is not cheat-proof.
@@ -241,12 +324,12 @@ Open the SVG in any browser. The generator lives in `scripts/`, and neither `scr
 ## Testing
 
 ```bash
-npm test                # all three suites below (needs dev dependencies)
+npm test                # the four suites below (needs dev dependencies)
 ```
 
-- `test/smoke.js` — starts the real server and drives three real Socket.IO clients through a whole match: lobby rules, movement sync, teleport rejection, door sync, two players grabbing the same item, dropping and sharing, locked doors, the stairs, all six objectives, escape, disconnect during a match, host migration, rematch with re-randomised items.
-- `test/ai.js` — runs the real game simulation headlessly and checks patrol, door opening, chase, attack, retreat, noise investigation, search, hiding rules, the bell, aggression scaling, the four difficulty levels, and the smarter behaviours (prediction, bottle origin, looking under tables, guarding the downed).
-- `test/hunt.js` — Hunt Mode rules: the head start, speed limits and anti-cheat, rage, attack wind-up/dodge/lock-out, teleport, traps, light sabotage, torch and bell stuns, hearing (including voice), and the AI taking over if the Headmaster's player leaves.
+- `test/smoke.js` — starts the real server and drives three real Socket.IO clients through a whole match: lobby rules, movement sync, teleport rejection, door sync, two players grabbing the same item, dropping and sharing, locked doors, the stairs, all six objectives, escape, disconnect during a match, host migration, rematch with re-randomised items, and dropping out and coming back (right token, wrong token, staying away too long).
+- `test/ai.js` — runs the real game simulation headlessly and checks patrol, door opening, chase, attack, retreat, noise investigation, search, hiding rules, the bell, aggression scaling, the four difficulty levels, and the smarter behaviours (prediction, bottle origin, looking under tables, guarding the downed), plus walking away from his swing, the end of the endless revive loop (a pair who keep reviving each other on the spot now lose; before 1.2 they survived 15 minutes on every difficulty), holding your breath, lures, dropping and tossing, the 1.0 items, Thomas's teddy, roll call, detention rules, survivor classes and the final bell.
+- `test/hunt.js` — Hunt Mode rules: the head start, speed limits and anti-cheat, rage, attack wind-up/dodge/lock-out, teleport, traps, light sabotage, torch, bell and camera stuns, hearing (including voice), the host's tuning sliders, and the AI taking over if the Headmaster's player leaves.
 - `test/physics.js` — runs the real Rapier character controller against the real school colliders: walls, the gate, stairs down and up, crawling under tables, lockers.
 - `test/browser-e2e.js` — optional; two real Chrome windows with real key presses (needs Playwright; instructions are at the top of the file).
 
@@ -259,6 +342,9 @@ server/monster.js    the Headmaster's state machine (AI)
 server/hunter.js     the Headmaster when a player controls him (Hunt Mode) and its balance numbers
 client/shared/map.js the school layout, pathfinding and line of sight (used by server AND client)
 client/js/main.js    menu, lobby, settings, match start/stop
+client/js/input.js   controllers (Gamepad API): Xbox / PlayStation detection, sticks, buttons, vibration, on-screen button names
+client/js/padnav.js  moving around menus with a controller
+client/js/paddiagram.js  the controller drawing on the Controls screen
 client/js/game.js    rendering loop, first-person controller, interpolation, HUD
 client/js/world.js   builds the school geometry, lights, props, items
 client/js/physics.js Rapier world and character controller

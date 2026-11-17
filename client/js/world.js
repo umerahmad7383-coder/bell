@@ -176,8 +176,20 @@ export function buildWorld(scene, T, Q) {
       scene.add(a, b);
       D.apply = (t) => { a.rotation.y = -t * 1.75; b.rotation.y = Math.PI + t * 1.75; }; // swings outward
       const lintel = new THREE.Mesh(new THREE.BoxGeometry(1, CEIL_Y - 2.55, 3), M.trim); lintel.position.set(4.5, (CEIL_Y + 2.55) / 2, 22.5); add(lintel);
-      const lock = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.3, 0.22), new THREE.MeshBasicMaterial({ color: 0x550000 })); lock.position.set(4.62, 1.3, 22.5); scene.add(lock);
-      D.lockLamp = lock;
+      // the electric lock: a steel magnet housing under the lintel (it used to float in the gateway once
+      // the gate swung open), a striker plate on each leaf, a hazard label and a status light
+      const steel = std({ color: 0x45494c });
+      const housing = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.56), steel); housing.position.set(4.6, 2.49, 22.5); add(housing);
+      const conduit = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 1.25), steel); conduit.position.set(4.6, 2.532, 21.6); add(conduit, false);
+      for (const leaf of [a, b]) { const plate = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.22), steel); plate.position.set(0, 2.375, 1.32); leaf.add(plate); }
+      const hz = document.createElement('canvas'); hz.width = 128; hz.height = 32; const hx = hz.getContext('2d');
+      hx.fillStyle = '#d9b02a'; hx.fillRect(0, 0, 128, 32); hx.fillStyle = '#151515';
+      for (let i = -2; i < 12; i++) { hx.beginPath(); hx.moveTo(i * 16, 32); hx.lineTo(i * 16 + 8, 32); hx.lineTo(i * 16 + 20, 0); hx.lineTo(i * 16 + 12, 0); hx.fill(); }
+      const hzTex = new THREE.CanvasTexture(hz); hzTex.colorSpace = THREE.SRGBColorSpace;
+      const label = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.05), new THREE.MeshLambertMaterial({ map: hzTex })); label.position.set(4.682, 2.47, 22.58); label.rotation.y = Math.PI / 2; scene.add(label);
+      const led = new THREE.Mesh(new THREE.SphereGeometry(0.018, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff3322 })); led.position.set(4.685, 2.49, 22.33); scene.add(led);
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: T.glow, color: 0xff3322, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending })); halo.scale.setScalar(0.3); halo.position.copy(led.position); scene.add(halo);
+      D.lockLamp = { set(c) { led.material.color.setHex(c); halo.material.color.setHex(c); } };
     } else if (d.kind === 'shelf') {
       const m = new THREE.Mesh(shelfGeo, M.prop); m.castShadow = Q.shadows;
       pivot.position.set(d.x + 0.5, y, d.z + 0.5); pivot.add(m); scene.add(pivot);
@@ -200,7 +212,7 @@ export function buildWorld(scene, T, Q) {
   world.setDoor = (id, open, locked, instant) => {
     const D = world.doors[id]; D.open = !!open; D.locked = !!locked;
     if (instant) { D.t = open ? 1 : 0; D.apply(D.t); }
-    if (D.lockLamp) D.lockLamp.material.color.set(open ? 0x003300 : 0x550000);
+    if (D.lockLamp) D.lockLamp.set(open ? 0x44ff77 : locked ? 0xff3322 : 0xffb030); // green open, amber unlocked, red locked
   };
 
   // ------------------------------------------------------------ furniture
@@ -243,7 +255,8 @@ export function buildWorld(scene, T, Q) {
     nurse: tableGeo(2, '#cfcdc4', [bx(0.32, 0.05, 0.24, -0.4, 1.085, 0.05, '#b8b29c', 0.2), cy(0.04, 0.04, 0.1, 0.5, 1.11, -0.15, '#a33', 8), cy(0.03, 0.03, 0.14, 0.62, 1.13, 0.1, '#ddd', 8)]),
   };
   const lists = { desk: [], teacher: [], lab: [], caf: [], plain2: [], plain3: [], art: [], nurse: [], bookshelf: [], cabinet: [], crate: [] };
-  const single = (parts, p, ry = 0) => { const m = new THREE.Mesh(merge(parts), M.prop); m.position.set(p.x, p.y, p.z); m.rotation.y = ry; return add(m); };
+  const statics = []; // furniture that never moves: merged into a few big meshes once the world is built
+  const single = (parts, p, ry = 0) => { const m = new THREE.Mesh(merge(parts), M.prop); m.position.set(p.x, p.y, p.z); m.rotation.y = ry; statics.push(m); return add(m); };
   const faceOff = { w: [0.2, 0], e: [-0.2, 0], s: [0, -0.2], n: [0, 0.2] };
   const faceRy = { w: -Math.PI / 2, e: Math.PI / 2, s: 0, n: Math.PI };
   const unlit = [];  // things that glow only when the power is on
@@ -544,24 +557,30 @@ export function buildWorld(scene, T, Q) {
       }
     }
     // emergency exit signs: battery-powered, so they glow even in a blackout
-    const exitMat = (dir) => new THREE.MeshBasicMaterial({ map: exitTexture(dir), color: 0x9a9a9a });
-    const hang = (x, z, ry, dir) => {
-      const g = new THREE.Group(); g.position.set(x, CEIL_Y - 0.42, z); g.rotation.y = ry;
-      const a = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.23), exitMat(dir)); a.position.z = 0.012;
-      const b = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.23), exitMat(-dir)); b.rotation.y = Math.PI; b.position.z = -0.012;
-      const box = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.27, 0.02), M.iron);
-      const wire = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.3, 0.01), M.iron); wire.position.y = 0.28;
-      g.add(box, a, b, wire); scene.add(g);
+    // (all the signs share one texture and are merged into two meshes: the glowing faces and the metal boxes)
+    const exitShared = new THREE.MeshBasicMaterial({ map: exitTexture(0), color: 0x9a9a9a });
+    const exitMat = () => exitShared;
+    const signFaces = [], signBoxes = [], tmp = new THREE.Object3D();
+    const place = (geo, list, x, y, z, ry, local) => { tmp.position.set(x, y, z); tmp.rotation.set(0, ry, 0); tmp.updateMatrix(); const m = new THREE.Matrix4().makeTranslation(local[0], local[1], local[2]); if (local[3]) m.multiply(new THREE.Matrix4().makeRotationY(local[3])); list.push(geo.applyMatrix4(m).applyMatrix4(tmp.matrix)); };
+    const hang = (x, z, ry) => {
+      const y = CEIL_Y - 0.42;
+      place(new THREE.PlaneGeometry(0.62, 0.23), signFaces, x, y, z, ry, [0, 0, 0.012]);
+      place(new THREE.PlaneGeometry(0.62, 0.23), signFaces, x, y, z, ry, [0, 0, -0.012, Math.PI]);
+      place(new THREE.BoxGeometry(0.66, 0.27, 0.02).toNonIndexed(), signBoxes, x, y, z, ry, [0, 0, 0]);
+      place(new THREE.BoxGeometry(0.01, 0.3, 0.01).toNonIndexed(), signBoxes, x, y, z, ry, [0, 0.28, 0]);
     };
     for (const x of [12, 22, 32, 42]) hang(x, 22.5, Math.PI / 2, 0); // main hall
     hang(14.9, 30, 0, 0); hang(14.9, 14, 0, 0); hang(46.9, 30, 0, 0); hang(46.9, 14, 0, 0); // corridors
     hang(14.9, 48, 0, 0); hang(46.9, 48, 0, 0); hang(30, 57.9, Math.PI / 2, 0);              // south wing
+    scene.add(new THREE.Mesh(mergeGeometries(signFaces.map((g) => g.toNonIndexed())), exitShared), new THREE.Mesh(mergeGeometries(signBoxes), M.iron));
     { const m = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.3), exitMat(0)); m.position.set(5.01, 2.85, 22.5); m.rotation.y = Math.PI / 2; scene.add(m); } // above the gate
     // stopped clocks
     const clockGeo = new THREE.CircleGeometry(0.26, 20), clockMat = std({ map: T.clock });
-    const clock = (x, y, z, ry) => { const m = new THREE.Mesh(clockGeo, clockMat); m.position.set(x, y, z); m.rotation.y = ry; scene.add(m); };
+    const clockList = [];
+    const clock = (x, y, z, ry) => { tmp.position.set(x, y, z); tmp.rotation.set(0, ry, 0); tmp.updateMatrix(); clockList.push(clockGeo.clone().applyMatrix4(tmp.matrix)); };
     for (const p of MAP.props) if (p.t === 'board') clock(p.x + 2.65, 2.55, p.z - (p.face === 'n' ? 0.475 : -0.475), p.face === 'n' ? 0 : Math.PI);
     clock(26, 2.7, 21.012, 0); clock(24.5, 2.8, 42.012, 0); clock(23.5, 2.6, 24.988, Math.PI); clock(40, 2.6, 25.012, 0);
+    scene.add(new THREE.Mesh(mergeGeometries(clockList.map((g) => g.toNonIndexed())), clockMat));
     // posters and notices on corridor walls (one atlas, four designs)
     const posterSpots = [];
     for (let z = 1; z < H - 1; z++) for (let x = 1; x < W - 1; x++) {
@@ -636,12 +655,14 @@ export function buildWorld(scene, T, Q) {
   function refreshFixtures() {
     fixtures.forEach((f, i) => {
       if (f.boiler) return;
-      f.lit = f.emergency ? true : world.power && !f.dead;
-      fixMesh.setColorAt(i, f.lit ? (f.emergency && !world.power ? RED : ON) : OFF);
+      f.lit = world.alarm || (f.emergency ? true : world.power && !f.dead);
+      fixMesh.setColorAt(i, world.alarm ? RED : f.lit ? (f.emergency && !world.power ? RED : ON) : OFF);
     });
     fixMesh.instanceColor.needsUpdate = true;
   }
   refreshFixtures();
+  /** the final bell: every light in the school turns red and pulses like a siren */
+  world.setAlarm = (on) => { world.alarm = on; activeLights = on ? Q.lights : world.power ? Q.lights : Q.darkLights; pool.forEach((l, i) => { l.visible = i < activeLights; }); refreshFixtures(); assignT = 0; };
 
   // ------------------------------------------------------------ items
   const glowMat = (color) => new THREE.SpriteMaterial({ map: T.glow, color, transparent: true, opacity: 0.25, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -660,6 +681,67 @@ export function buildWorld(scene, T, Q) {
   };
   /** a lure was set off: swing the great bell, light the radio */
   world.lureFx = (id, delay, dur) => { const f = lureFx[id]; if (f) { f.t = -delay; f.dur = dur; } };
+
+  // ------------------------------------------------------------ v1.0: chalk marks, alarm clocks, camera flashes, Thomas
+  const timed = []; // short-lived things: { t, dur, fn(k, dt) -> true when done }
+  // chalk symbols, drawn once: X, arrow left, arrow right, warning
+  const chalkTex = [0, 1, 2, 3].map((sym) => {
+    const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+    g.strokeStyle = 'rgba(240,240,232,0.92)'; g.lineCap = 'round'; g.lineJoin = 'round';
+    const stroke = (pts, w = 9) => { for (let k = 0; k < 3; k++) { g.lineWidth = w - k * 2.5; g.globalAlpha = 0.45 + k * 0.2; g.beginPath(); pts.forEach(([x, y], i) => { const jx = x + R(-2, 2), jy = y + R(-2, 2); if (i) g.lineTo(jx, jy); else g.moveTo(jx, jy); }); g.stroke(); } };
+    if (sym === 0) { stroke([[30, 30], [98, 98]]); stroke([[98, 30], [30, 98]]); }
+    if (sym === 1) { stroke([[104, 64], [26, 64]]); stroke([[52, 36], [24, 64], [52, 92]]); }
+    if (sym === 2) { stroke([[24, 64], [102, 64]]); stroke([[76, 36], [104, 64], [76, 92]]); }
+    if (sym === 3) { stroke([[64, 14], [64, 80]], 11); g.globalAlpha = 1; g.fillStyle = 'rgba(240,240,232,0.92)'; g.beginPath(); g.arc(64, 104, 8, 0, 6.28); g.fill(); g.globalAlpha = 0.5; stroke([[24, 118], [64, 6], [104, 118], [24, 118]], 5); }
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; return tex;
+  });
+  const marks = new Map();
+  /** m = { id, p: [x, y, z], n: [nx, nz], sym }, tinted with the colour of whoever drew it */
+  world.addMark = (m, color = '#ffffff') => {
+    if (marks.has(m.id)) return;
+    const mat = new THREE.MeshLambertMaterial({ map: chalkTex[m.sym] || chalkTex[0], transparent: true, depthWrite: false, color: new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.65), emissive: 0x222222, polygonOffset: true, polygonOffsetFactor: -2 });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.46), mat);
+    mesh.position.set(m.p[0], m.p[1], m.p[2]); mesh.rotation.y = Math.atan2(m.n[0], m.n[1]); mesh.rotation.z = R(-0.08, 0.08);
+    scene.add(mesh); marks.set(m.id, mesh);
+  };
+  world.removeMark = (id) => { const mesh = marks.get(id); if (!mesh) return; scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); marks.delete(id); };
+  /** a wound-up alarm clock sitting on the floor: it shakes while it rings, then it is spent */
+  world.addAlarm = (e) => {
+    const { group } = buildItemMesh('alarm'); group.position.set(e.p[0], e.p[1] + 0.01, e.p[2]); group.rotation.y = R(0, 6.28); scene.add(group);
+    timed.push({ t: 0, dur: e.delay + e.dur + 4, fn: (t) => {
+      const ringing = t > e.delay && t < e.delay + e.dur;
+      group.rotation.z = ringing ? Math.sin(t * 60) * 0.12 : 0; group.position.y = e.p[1] + 0.01 + (ringing ? Math.abs(Math.sin(t * 45)) * 0.02 : 0);
+      if (t > e.delay + e.dur + 3.5) { scene.remove(group); group.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); return true; }
+    } });
+  };
+  /** a camera flash: a burst of white light that lights up the room for a moment */
+  const flashLight = new THREE.PointLight(0xeef4ff, 0, 14, 1.6); scene.add(flashLight);
+  world.flashAt = (p) => { flashLight.position.set(p[0], p[1], p[2]); timed.push({ t: 0, dur: 0.25, fn: (t) => { flashLight.intensity = Math.max(0, 1 - t / 0.22) * 40; if (t > 0.22) { flashLight.intensity = 0; return true; } } }); };
+  /** Thomas, for a moment: a small pale figure in front of his locker that fades away */
+  world.ghost = (p) => {
+    const g = new THREE.Group(), mat = new THREE.MeshBasicMaterial({ color: 0xcfe6ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.2, 0.75, 10), mat); body.position.y = 0.55;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), mat); head.position.y = 1.05;
+    const bear = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), mat); bear.position.set(0.12, 0.62, 0.12);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: T.glow, color: 0x9fd0ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })); glow.scale.setScalar(2.2); glow.position.y = 0.7;
+    g.add(body, head, bear, glow); g.position.set(p[0], (p[1] || 0) + 0.02, p[2]); scene.add(g);
+    timed.push({ t: 0, dur: 6, fn: (t) => {
+      const k = Math.min(1, t / 1.2) * Math.min(1, Math.max(0, (5.5 - t) / 1.5));
+      mat.opacity = 0.55 * k * (0.85 + Math.sin(t * 13) * 0.15); glow.material.opacity = 0.35 * k; g.position.y = (p[1] || 0) + 0.02 + Math.sin(t * 1.6) * 0.04;
+      if (t > 5.6) { scene.remove(g); body.geometry.dispose(); head.geometry.dispose(); bear.geometry.dispose(); mat.dispose(); glow.material.dispose(); return true; }
+    } });
+  };
+  // his name, taped to his locker door
+  {
+    const L = MAP.lockers[MAP.thomasLocker];
+    const c = document.createElement('canvas'); c.width = 128; c.height = 48; const g = c.getContext('2d');
+    g.fillStyle = '#e8dfc6'; g.fillRect(0, 0, 128, 48); g.fillStyle = 'rgba(200,190,120,0.55)'; g.fillRect(0, 0, 128, 8);
+    g.fillStyle = '#20190f'; g.font = 'bold 22px "Comic Sans MS", cursive'; g.textAlign = 'center'; g.fillText('T. PETERS', 64, 34);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.11), new THREE.MeshLambertMaterial({ map: tex }));
+    tag.position.set(L.x + 0.5 + L.dx * 0.035, L.y + 1.62, L.z + 0.5 + L.dz * 0.035); tag.rotation.y = Math.atan2(L.dx, L.dz); tag.rotation.z = 0.06;
+    scene.add(tag);
+  }
   world.removeItem = (id) => {
     const it = world.items.get(id); if (!it) return;
     scene.remove(it.mesh);
@@ -669,10 +751,11 @@ export function buildWorld(scene, T, Q) {
   world.clearItems = () => { for (const id of [...world.items.keys()]) world.removeItem(id); };
 
   // ------------------------------------------------------------ rain in the courtyard
-  const RN = 500, rainPos = new Float32Array(RN * 3);
-  for (let i = 0; i < RN; i++) { rainPos[i * 3] = R(0.5, 4); rainPos[i * 3 + 1] = R(0, 8); rainPos[i * 3 + 2] = R(18.5, 26.5); }
+  // thin falling streaks (two points per drop), slanted a little by the wind
+  const RN = 420, rainPos = new Float32Array(RN * 6);
+  for (let i = 0; i < RN; i++) { const x = R(0.5, 4), y = R(0, 8), z = R(18.5, 26.5); rainPos.set([x, y, z, x + 0.03, y + 0.38, z + 0.015], i * 6); }
   const rainGeo = new THREE.BufferGeometry(); rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
-  scene.add(new THREE.Points(rainGeo, new THREE.PointsMaterial({ color: 0x8fa0b5, size: 0.05, transparent: true, opacity: 0.5 })));
+  scene.add(new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({ color: 0x9fb0c2, transparent: true, opacity: 0.32, depthWrite: false })));
 
   // ------------------------------------------------------------ security monitors: live floor plan with the Headmaster's position
   const planBg = document.createElement('canvas'); planBg.width = 252; planBg.height = 192;
@@ -720,10 +803,11 @@ export function buildWorld(scene, T, Q) {
       const f = o.f;
       if (f.boiler) { l.position.set(f.x, f.y, f.z); l.color.copy(FIRE); l.intensity = 3.5 + Math.sin(t * 9) * 0.6 + Math.sin(t * 23) * 0.4; return; }
       let v = 1;
-      if (f.emergency && !world.power) v = 0.75 + 0.25 * Math.sin(t * 2 + f.phase);
+      if (world.alarm) v = 0.35 + 0.65 * Math.abs(Math.sin(t * 2.6));
+      else if (f.emergency && !world.power) v = 0.75 + 0.25 * Math.sin(t * 2 + f.phase);
       else if (f.faulty) { const n = Math.sin(t * 13 + f.phase) * Math.sin(t * 7.3 + f.phase * 2) * Math.sin(t * 1.7 + f.phase); v = n > 0.25 ? 0.05 : n > 0.1 ? 0.5 : 1; }
       if (flickerT > 0) v *= Math.sin(t * 40 + f.phase) > 0 ? 0.03 : 0.8;
-      const red = f.emergency && !world.power;
+      const red = world.alarm || (f.emergency && !world.power);
       l.position.set(f.x, f.y - 0.25, f.z);
       l.color.copy(red ? RED : ON);
       l.intensity = (red ? 7 : 9) * v;
@@ -731,6 +815,7 @@ export function buildWorld(scene, T, Q) {
     });
     if (dirty) fixMesh.instanceColor.needsUpdate = true;
     // items pulse softly so they can be found in the dark; dropped ones arc down to the floor
+    for (let i = timed.length - 1; i >= 0; i--) { const f = timed[i]; f.t += dt; if (f.fn(f.t, dt)) timed.splice(i, 1); }
     for (const it of world.items.values()) {
       it.glow.material.opacity = 0.16 + 0.12 * Math.sin(t * 2.5 + it.id);
       const a = it.anim;
@@ -760,10 +845,33 @@ export function buildWorld(scene, T, Q) {
     }
     // rain
     if (cam.x < 16 && cam.y > -1) { // only simulated when the courtyard can actually be seen
-      for (let i = 0; i < RN; i++) { rainPos[i * 3 + 1] -= dt * 14; if (rainPos[i * 3 + 1] < 0) rainPos[i * 3 + 1] = 8; }
+      for (let i = 0; i < RN; i++) { const k = i * 6; rainPos[k + 1] -= dt * 14; rainPos[k + 4] -= dt * 14; if (rainPos[k + 1] < 0) { rainPos[k + 1] = 8; rainPos[k + 4] = 8.38; } }
       rainGeo.attributes.position.needsUpdate = true;
     }
   };
 
+  // ------------------------------------------------------------ merge the static furniture
+  // Hundreds of separate pieces of furniture meant hundreds of draw calls (and again for every shadow).
+  // They never move, so they are baked into one mesh per 12 x 12 m tile: far fewer calls, and tiles
+  // out of view are still skipped. Anything with children (an easel's canvas) stays as it is.
+  {
+    const TILE = 12, tiles = new Map();
+    for (const m of statics) {
+      if (m.children.length || m.parent !== scene) continue;
+      m.updateMatrix();
+      const key = `${Math.floor(m.position.x / TILE)},${Math.floor(m.position.z / TILE)}`;
+      (tiles.get(key) || tiles.set(key, []).get(key)).push(m);
+    }
+    for (const list of tiles.values()) {
+      if (list.length < 2) continue;
+      try {
+        const geo = mergeGeometries(list.map((m) => m.geometry.clone().applyMatrix4(m.matrix)));
+        if (!geo) continue;
+        const big = new THREE.Mesh(geo, M.prop); big.castShadow = Q.shadows; big.receiveShadow = Q.shadows;
+        scene.add(big);
+        for (const m of list) { scene.remove(m); m.geometry.dispose(); }
+      } catch { /* leave this tile as separate meshes */ }
+    }
+  }
   return world;
 }

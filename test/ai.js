@@ -4,9 +4,9 @@ import { Game } from '../server/game.js';
 import { MAP } from '../client/shared/map.js';
 
 const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode = 1; } else console.log('  ok  -', m); };
-function mk(n = 1, difficulty = 'intermediate') {
+function mk(n = 1, difficulty = 'intermediate', mods = [], classes = []) {
   const evs = [];
-  const g = new Game({ difficulty, players: Array.from({ length: n }, (_, i) => ({ pid: i + 1, name: 'P' + (i + 1) })), send: (e, d) => e === 'g:ev' && evs.push(d), sendTo: (_p, e, d) => e === 'g:ev' && evs.push(d), onEnd: (s) => (g.summary = s) });
+  const g = new Game({ difficulty, mods, players: Array.from({ length: n }, (_, i) => ({ pid: i + 1, name: 'P' + (i + 1), cls: classes[i] })), send: (e, d) => e === 'g:ev' && evs.push(d), sendTo: (_p, e, d) => e === 'g:ev' && evs.push(d), onEnd: (s) => (g.summary = s) });
   g.monster.grace = 0;
   return { g, evs };
 }
@@ -159,6 +159,156 @@ console.log('DROPPING AND TOSSING');
   const w = evs.find((e) => e.e === 'item+' && e.item.id === 902);
   assert(w && w.item.z > 21 && w.item.z < 21.6, 'a toss never goes through a wall');
 }
+console.log('v1.0 ITEMS');
+{
+  // camera: a flash in his face from close range drives him back; from behind, it does nothing
+  const { g, evs } = mk(1); const p = g.players.get(1), m = g.monster;
+  p.x = 24.5; p.z = 22.5; p.y = 0; p.hidden = -1; p.inv[0] = { id: 990, type: 'camera', charges: 3 };
+  m.x = 29.5; m.z = 22.5; m.path = []; m.startChase(p);
+  g.onUse(1, { slot: 0, ry: -Math.PI / 2 }); // facing +x, straight at him
+  assert(m.state === 'retreat' && p.stats.photos === 1, 'a camera flash in his face (5 m) makes him reel back');
+  assert(p.inv[0] && p.inv[0].charges === 2, 'the camera has 3 shots');
+  g.time += 2; m.startChase(p); g.onUse(1, { slot: 0, ry: Math.PI / 2 }); // facing away
+  assert(m.state === 'chase', 'flashing the wall behind you does nothing');
+  g.time += 2; g.onUse(1, { slot: 0, ry: -Math.PI / 2 });
+  assert(!p.inv[0], 'after the third photo the camera is used up');
+}
+{
+  // energy drink, alarm clock
+  const { g, evs } = mk(1); const p = g.players.get(1), m = g.monster;
+  p.x = 30.5; p.z = 39.5; p.y = 0; p.ry = 0; p.inv[0] = { id: 991, type: 'soda' }; p.inv[1] = { id: 992, type: 'alarm' };
+  g.onUse(1, { slot: 0 });
+  assert(evs.some((e) => e.e === 'soda' && e.t > 5) && !p.inv[0], 'an energy drink gives a burst of unlimited stamina');
+  m.x = 24.5; m.z = 39.5; m.path = []; m.timer = 99; m.setState('patrol');
+  g.onUse(1, { slot: 1 });
+  const a = evs.find((e) => e.e === 'alarm');
+  assert(a && !p.inv[1] && Math.hypot(a.p[0] - 30.5, a.p[2] - 39.5) < 1, 'winding the alarm clock sets it down at your feet');
+  p.x = 2; p.z = 22; p.hidden = 0;
+  run(g, a.delay - 1);
+  assert(m.state !== 'investigate', `it ticks quietly for ${a.delay} s`);
+  run(g, 1.6);
+  assert(m.state === 'investigate' && Math.hypot(m.noiseTarget.x - a.p[0], m.noiseTarget.z - a.p[2]) < 1.5, '...then rings, and he goes to it');
+}
+{
+  // chalk: marks land on the wall you face, never through it, and each player keeps at most 10
+  const { g, evs } = mk(1); const p = g.players.get(1);
+  p.x = 20.5; p.z = 21.6; p.y = 0; p.inv[0] = { id: 993, type: 'chalk' };
+  g.onUse(1, { slot: 0, ry: 0, rx: 0, sym: 2 }); // facing -z: the main hall's north wall is at z = 21
+  const mk1 = evs.find((e) => e.e === 'chalk');
+  assert(mk1 && Math.abs(mk1.p[2] - 21.01) < 0.03 && mk1.n[1] === 1 && mk1.sym === 2, `chalk draws on the wall you face (z=${mk1 && mk1.p[2]}, an arrow)`);
+  assert(p.inv[0], 'chalk is not used up');
+  p.z = 22.5; evs.length = 0; g.time += 1; g.onUse(1, { slot: 0, ry: -Math.PI / 2 }); // facing down the long hall: no wall in reach
+  assert(!evs.some((e) => e.e === 'chalk'), 'nothing is drawn when no wall is within reach');
+  p.z = 21.6;
+  for (let i = 0; i < 12; i++) { g.time += 1; g.onUse(1, { slot: 0, ry: 0 }); }
+  assert(g.marks.filter((k) => k.by === 1).length === 10 && evs.some((e) => e.e === 'chalk-'), 'the oldest mark is wiped once you have drawn 10');
+}
+console.log("THOMAS'S TEDDY (side quest)");
+{
+  const { g, evs } = mk(2); const p = g.players.get(1), q = g.players.get(2), m = g.monster;
+  const L = MAP.lockers[MAP.thomasLocker];
+  assert([...g.items.values()].some((it) => it.type === 'teddy'), 'a teddy bear is hidden somewhere every match');
+  q.hp = 1; m.x = 54.5; m.z = 52.5; m.path = []; m.startChase(q); q.x = 52.5; q.z = 53.5;
+  p.x = L.x + 0.5; p.z = L.z + 1.6; p.y = 0;
+  g.onInteract(1, { k: 'teddy', id: L.id });
+  assert(!g.teddyDone && evs.some((e) => e.e === 'msg' && /T\. PETERS/.test(e.text)), 'without the bear, his locker just shows his name');
+  p.inv[2] = { id: 994, type: 'teddy' };
+  g.onInteract(1, { k: 'teddy', id: L.id });
+  const rev = evs.find((e) => e.e === 'reveal');
+  assert(g.teddyDone && evs.some((e) => e.e === 'ghost') && !p.inv[2], 'putting the bear back in his locker brings Thomas out to say thank you');
+  assert(q.hp === g.maxHp, 'everyone hurt is patched up by one hit');
+  assert(rev && rev.items.some((i) => i[0] === 'fuse') && rev.items.some((i) => i[0] === 'key_gate'), 'and the objective items light up through the walls');
+  assert(m.state === 'retreat', 'and the Headmaster is driven away');
+}
+console.log('ROLL CALL');
+{
+  const { g, evs } = mk(2); const p = g.players.get(1), q = g.players.get(2), m = g.monster;
+  q.x = 2; q.z = 22; q.hidden = 0; // only P1 can be called
+  p.x = 30.5; p.z = 39.5; p.y = 0; p.hidden = -1;
+  m.x = 40.5; m.z = 10.5; m.path = []; m.timer = 99; m.setState('patrol');
+  g.rollT = 0.01; run(g, 0.2);
+  const rc = evs.find((e) => e.e === 'rollcall');
+  assert(rc && rc.id === 1 && rc.name === 'P1', 'the PA calls a student by name');
+  run(g, 5.5);
+  assert(m.state === 'investigate' && Math.hypot(m.noiseTarget.x - p.x, m.noiseTarget.z - p.z) < 5, 'he heads for roughly where they are, from across the school');
+  // hiding stops it: move him away, put P1 in a locker, and he gets no more hints
+  m.setState('patrol'); m.noiseTarget = null; m.path = []; m.x = 40.5; m.z = 10.5; p.hidden = 5;
+  run(g, 6);
+  assert(m.state !== 'investigate', 'while you hide in a locker he gets no more hints');
+  p.hidden = -1; run(g, 25);
+  assert(evs.some((e) => e.e === 'rollend' && e.ok) && p.stats.rolls === 1, 'survive the 30 s and you are excused');
+  const { g: g2, evs: e2 } = mk(2); const h = new Game({ mode: 'hunt', players: [{ pid: 1, name: 'H' }, { pid: 2, name: 'S' }], send() {}, sendTo() {}, onEnd() {} });
+  h.rollT = 0.01; let called = false; h.emit = (ev) => { if (ev.e === 'rollcall') called = true; }; for (let i = 0; i < 10; i++) h.tick(1 / 15);
+  assert(!called, 'there is no roll call in Hunt Mode');
+  void g2; void e2;
+}
+console.log('DETENTION RULES (modifiers)');
+{
+  const { g } = mk(2, 'beginner', ['onehit', 'sportsday', 'nonsense']);
+  assert(g.maxHp === 1 && g.players.get(1).hp === 1, 'One strike: everyone goes down in a single hit (even on Beginner)');
+  assert(Math.abs(g.speedMul - 1.12) < 1e-9 && !g.mods.nonsense, 'Sports day: he is 12% faster; unknown rules are ignored');
+  const { g: g3 } = mk(1, 'intermediate', ['blackout']);
+  const { g: g4 } = mk(1, 'intermediate', []);
+  const bat = (gg) => [...gg.items.values()].filter((it) => it.type === 'battery').length;
+  assert(bat(g3) >= bat(g4) + 2, `Lights out: extra batteries lie around (${bat(g3)} vs ${bat(g4)})`);
+  const { g: g5 } = mk(1, 'intermediate', ['restless']);
+  assert(g5.speedMul > 1 && g5.rollT < 130, 'Restless school: he is a little faster and roll call comes sooner');
+}
+console.log('SURVIVOR CLASSES');
+{
+  const { g, evs } = mk(4, 'intermediate', [], ['athlete', 'medic', 'mechanic', 'sneak']);
+  const [ath, med, mech, sneak] = [1, 2, 3, 4].map((i) => g.players.get(i));
+  assert(ath.cls === 'athlete' && med.cls === 'medic' && mech.cls === 'mechanic' && sneak.cls === 'sneak', 'each player keeps the class they picked');
+  assert(med.inv[0] && med.inv[0].type === 'medkit' && !ath.inv.some(Boolean), 'the Medic starts with a Med Kit');
+  const { g: g0 } = mk(1, 'intermediate', [], ['wizard']);
+  assert(g0.players.get(1).cls === 'athlete', 'an unknown class falls back to Athlete');
+  // revive speed: Medic 2 s, everyone else 4 s
+  const reviveTime = (cls) => {
+    const { g } = mk(2, 'intermediate', [], [cls, 'athlete']); const p = g.players.get(1), q = g.players.get(2), m = g.monster;
+    m.x = 58.5; m.z = 30.5; m.path = []; m.timer = 999; m.setState('patrol'); m.grace = 999;
+    p.x = 20.5; p.z = 22.5; q.x = 21.5; q.z = 22.5; q.state = 'downed'; q.hp = 0; q.bleed = 99;
+    g.onInteract(1, { k: 'revive', id: 2 });
+    let t = 0; while (q.state === 'downed' && t < 10) { g.tick(1 / 15); t += 1 / 15; }
+    return t;
+  };
+  const tm = reviveTime('medic'), ta = reviveTime('athlete');
+  assert(tm < 2.4 && ta > 3.6, `the Medic revives in half the time (${tm.toFixed(1)} s vs ${ta.toFixed(1)} s)`);
+  // footsteps: a Sneak walking is heard over half the distance
+  const heard = (cls) => {
+    const { g } = mk(1, 'intermediate', [], [cls]); const p = g.players.get(1), m = g.monster;
+    m.x = 20.5; m.z = 22.5; m.path = []; m.timer = 999; m.setState('patrol');
+    p.x = 24.6; p.z = 22.5; p.flags = 8; // walking 4.1 m away, out of his sight line (behind him)
+    m.ry = Math.PI * 1.5; m.sense = () => null;
+    run(g, 1.2); return m.state === 'investigate';
+  };
+  assert(heard('athlete') && !heard('sneak'), 'footsteps 4 m away: heard from an Athlete, not from a Sneak');
+  // a Mechanic opens doors silently
+  const doorNoise = (cls) => {
+    const { g } = mk(1, 'intermediate', [], [cls]); const p = g.players.get(1);
+    const d = g.doors.find((dd) => dd.kind === 'door' && !dd.locked); p.x = d.x + 0.5 + (d.axis === 'x' ? -1.2 : 0); p.z = d.z + 0.5 + (d.axis === 'x' ? 0 : -1.2);
+    let n = 0; const on = g.monster.onNoise.bind(g.monster); g.monster.onNoise = (x) => { n++; on(x); };
+    g.onInteract(1, { k: 'door', id: d.id }); return n;
+  };
+  assert(doorNoise('athlete') > 0 && doorNoise('mechanic') === 0, 'a Mechanic opens doors without a sound');
+}
+console.log('THE FINAL BELL');
+{
+  const { g, evs } = mk(2); const p = g.players.get(1), q = g.players.get(2), m = g.monster;
+  q.x = 30.5; q.z = 39.5; // still inside, far from the gate
+  Object.assign(g.obj, { fusesFound: 3, fuses: 3, power: true, officeOpen: true, gateKey: true, security: true });
+  p.x = 6; p.z = 22.5; p.y = 0; p.inv[0] = { id: 995, type: 'key_gate' };
+  m.x = 40.5; m.z = 10.5; m.path = []; m.timer = 99; m.setState('patrol');
+  const before = m.D.speed; void before;
+  g.onInteract(1, { k: 'door', id: MAP.gate.id });
+  assert(g.obj.gateOpen && evs.some((e) => e.e === 'finalbell' && e.t === 120), 'opening the gate rings the final bell: 2 minutes to get out');
+  assert(m.enraged, 'and the Headmaster is enraged (15% faster)');
+  run(g, 4.5);
+  assert(m.state === 'investigate' || m.state === 'chase', `he goes straight for the nearest survivor (${m.state})`);
+  p.x = 2; p.z = 22.5; run(g, 0.2);
+  assert(p.state === 'escaped', 'the first player gets out');
+  q.hidden = 2; g.time = g.final.until - 0.01; run(g, 0.2);
+  assert(evs.some((e) => e.e === 'gateslam') && q.state === 'dead' && g.over && g.summary.win, 'when time runs out the gate slams: anyone still inside is caught, and the match ends');
+}
 console.log('BELL');
 {
   const { g, evs } = mk();
@@ -231,9 +381,75 @@ console.log('SMARTER BEHAVIOUR');
   for (let i = 0; i < 10; i++) {
     const { g, evs } = mk(2, 'nightmare'); const a = g.players.get(1), b = g.players.get(2), mm = g.monster;
     b.x = 2; b.z = 22; b.hidden = 0; a.x = 30.5; a.z = 22.5; mm.x = 31.5; mm.z = 22.5;
-    g.hitPlayer(a); mm.afterHit(); run(g, 14);
+    g.hitPlayer(a); mm.afterHit(a); run(g, 14);
     if (states(evs).includes('investigate') && Math.hypot(mm.x - a.x, mm.z - a.z) < 12) guarded++;
   }
   assert(guarded >= 6, `comes back to guard a downed player on Nightmare (${guarded}/10 runs)`);
+}
+console.log('NO ENDLESS REVIVE LOOP');
+{
+  // Two friends together used to be immortal: he put one down, walked off, the other picked them up, repeat.
+  const hits = (g, p, n) => { for (let i = 0; i < n; i++) g.hitPlayer(p); };
+  // every fall costs more, and there is a limit
+  {
+    const { g } = mk(2, 'intermediate'); const a = g.players.get(1), b = g.players.get(2); b.x = 2; b.z = 22; b.hidden = 0;
+    hits(g, a, 2); const bleed1 = a.bleed;
+    assert(a.state === 'downed' && a.downs === 1 && bleed1 === 80, `first fall: downed with the full ${bleed1} s to be saved`);
+    g.revive(a, 1, b); hits(g, a, 1);
+    assert(a.state === 'downed' && a.downs === 2 && a.bleed === 40, `second fall bleeds out twice as fast (${a.bleed} s)`);
+    g.revive(a, 1, b); hits(g, a, 1);
+    assert(a.state === 'dead', 'third fall on Intermediate: nobody gets back up from that');
+  }
+  const limit = (d) => { const { g } = mk(2, d); const a = g.players.get(1), b = g.players.get(2); b.x = 2; b.z = 22; b.hidden = 0; let falls = 0;
+    for (let i = 0; i < 6 && a.state !== 'dead'; i++) { while (a.state === 'alive') g.hitPlayer(a); if (a.state === 'downed') { falls++; g.revive(a, 1, b); } } return falls; };
+  assert(limit('beginner') === 3 && limit('hard') === 2 && limit('nightmare') === 1, `picked up at most 3 / 2 / 1 times on Beginner / Hard / Nightmare (${limit('beginner')} / ${limit('hard')} / ${limit('nightmare')})`);
+  // Thomas forgives one fall
+  {
+    const { g } = mk(1, 'intermediate'); const a = g.players.get(1);
+    hits(g, a, 2); g.revive(a, 1, a); assert(a.downs === 1, 'setup: fallen once');
+    g.teddyDone = false; a.inv[0] = { id: 999, type: 'teddy' }; const L = MAP.lockers[MAP.thomasLocker]; a.x = L.x + 0.5 + L.dx; a.z = L.z + 0.5 + L.dz; a.y = 0;
+    g.returnTeddy(a); assert(a.downs === 0 && g.teddyDone, "returning Thomas's teddy forgives one fall");
+  }
+  // he no longer walks away from a witness
+  const afterDown = (d, gap) => {
+    const { g, evs } = mk(2, d); const a = g.players.get(1), b = g.players.get(2), m = g.monster;
+    a.x = 30.5; a.z = 22.5; b.x = 30.5 + gap; b.z = 22.5; a.flags = b.flags = 0; m.x = 27.5; m.z = 22.5;
+    a.hp = 1; m.startChase(a);
+    let at = -1; run(g, 8, (t) => { if (at < 0 && a.state === 'downed') at = t; });
+    const after = evs.slice(evs.findIndex((e) => e.e === 'hit')); const st = states(after);
+    return { downed: at >= 0, next: st[0], chasedB: b.hp < g.maxHp || b.state !== 'alive' };
+  };
+  for (const d of ['beginner', 'intermediate', 'nightmare']) {
+    const r = afterDown(d, 2.5);
+    assert(r.downed && r.next === 'chase' && r.chasedB, `${d}: after putting someone down beside their friend, he goes straight for the friend instead of leaving (then: ${r.next})`);
+  }
+  {
+    const { g, evs } = mk(1, 'intermediate'); const a = g.players.get(1), m = g.monster;
+    a.x = 30.5; a.z = 22.5; m.x = 28.5; m.z = 22.5; m.startChase(a); run(g, 4);
+    assert(a.hp === 1 && a.state === 'alive' && states(evs).includes('retreat'), 'a hit that only wounds still sends him away, so the wounded can run');
+  }
+  {
+    // reviving makes noise he can hear
+    const { g } = mk(2, 'intermediate'); const a = g.players.get(1), b = g.players.get(2), m = g.monster;
+    a.x = 30.5; a.z = 22.5; b.x = 31.5; b.z = 22.5; hits(g, a, 2);
+    m.x = 37.5; m.z = 22.5; m.path = []; m.setState('patrol'); m.timer = 5; let heard = false;
+    const on = m.onNoise.bind(m); m.onNoise = (n) => { if (n.kind === 'revive') heard = true; on(n); };
+    const { evs } = { evs: [] }; const send = g.send; g.send = (e, d) => { if (e === 'g:ev') evs.push(d); send(e, d); };
+    g.onInteract(2, { k: 'revive', id: 1 }); run(g, 2);
+    assert(heard && /investigate|chase/.test(states(evs).join()), `picking a classmate up is noisy: he hears it and comes (${states(evs).join(' > ')})`);
+  }
+  // the loop itself: two friends standing together, always reviving each other, now lose
+  for (const d of ['beginner', 'intermediate']) {
+    let lost = 0, secs = 0;
+    for (let k = 0; k < 4; k++) {
+      const { g } = mk(2, d); const a = g.players.get(1), b = g.players.get(2), m = g.monster;
+      a.x = 30.5; a.z = 22.5; b.x = 31.6; b.z = 22.5; a.flags = b.flags = 2; m.x = 40.5; m.z = 22.5;
+      run(g, 900, () => {
+        for (const [p, q] of [[a, b], [b, a]]) if (p.state === 'alive' && q.state === 'downed' && !p.reviving) g.onInteract(p.id, { k: 'revive', id: q.id });
+      });
+      if (g.over && !g.summary.win) { lost++; secs += g.summary.time; }
+    }
+    assert(lost === 4, `${d}: two friends who just keep reviving each other on the spot now lose (${lost}/4, after ${Math.round(secs / Math.max(1, lost))} s on average)`);
+  }
 }
 console.log(process.exitCode ? '\nSOME AI TESTS FAILED' : '\nALL AI TESTS PASSED');

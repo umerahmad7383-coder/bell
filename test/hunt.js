@@ -1,6 +1,6 @@
 // Hunt Mode rules, tested against the real Game with a simulated human Headmaster.
 import { Game } from '../server/game.js';
-import { HUNT } from '../server/hunter.js';
+import { HUNT, tunedHunt } from '../server/hunter.js';
 import { MAP, idx } from '../client/shared/map.js';
 
 const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode = 1; } else console.log('  ok  -', m); };
@@ -68,6 +68,30 @@ console.log('ATTACK');
   evs.length = 0; m.act({ k: 'attack' }); run(g, HUNT.windup + 0.1);
   assert(evs.some((e) => e.e === 'adrenaline' && e.t === HUNT.adrenaline), `a survivor who takes a hit and stays up gets ${HUNT.adrenaline} s of adrenaline to break away`);
 }
+{
+  assert(HUNT.nightFog >= 0.15, `his night vision only reaches about 6 m (fog density ${HUNT.nightFog})`);
+  const { g, m, evs } = mk(3); m.grace = 0;
+  const p = g.players.get(2); place(m, 26, 22.5, Math.PI / 2); p.x = 22; p.z = 22.5; p.y = 0; p.inv[0] = { id: 777, type: 'camera', charges: 3 };
+  g.onUse(2, { slot: 0, ry: -Math.PI / 2 });
+  assert(m.stunT > 1.5 && evs.some((e) => e.e === 'mstun' && e.kind === 'camera'), `a survivor's camera flash stuns the player Headmaster for ${HUNT.cameraStun} s`);
+  m.stunT = 0; g.time += 2; evs.length = 0; g.onUse(2, { slot: 0, ry: -Math.PI / 2 });
+  assert(m.stunT <= 0, `...then he is dazzle-proof for ${HUNT.cameraImmune} s`);
+}
+{
+  // the host's tuning sliders
+  const mkT = (tune, n = 3) => new Game({ mode: 'hunt', tune, hunterPid: 1, players: Array.from({ length: n }, (_, i) => ({ pid: i + 1, name: 'P' + (i + 1) })), send() {}, sendTo() {}, onEnd() {} });
+  const d = mkT(null).monster.H;
+  assert(Math.abs(d.walk - HUNT.walk) < 1e-9 && Math.abs(d.tpCd - HUNT.tpCd) < 1e-9 && Math.abs(d.nightFog - HUNT.nightFog) < 0.01, 'default tuning leaves him exactly as balanced');
+  const t = mkT({ speed: 120, vision: 4, cooldowns: 200, hearing: 50, hits: 4 });
+  assert(Math.abs(t.monster.H.walk - HUNT.walk * 1.2) < 1e-9 && Math.abs(t.monster.H.rage - HUNT.rage * 1.2) < 1e-9, 'speed slider scales his walk and rage');
+  assert(Math.abs(t.monster.H.nightFog - 0.25) < 1e-9 && t.monster.H.tpCd === HUNT.tpCd * 2 && t.monster.H.hearing === 0.5, 'vision, cooldown and hearing sliders apply');
+  assert(t.maxHp === 4 && mkT({ hits: 0 }, 4).maxHp === 2 && mkT({ hits: 0 }, 3).maxHp === 3, 'hits slider sets how many hits survivors take (0 = automatic)');
+  const w = mkT({ speed: 999, vision: -5, cooldowns: 'x' });
+  assert(w.tune.speed === 120 && w.tune.vision === 4 && w.tune.cooldowns === 100, 'silly values are clamped');
+  assert(mkT({ speed: 120 }).initPayload(1).hunt.walk === HUNT.walk * 1.2, "the Headmaster's own client gets the tuned numbers");
+  const fin = mkT(null); fin.monster.grace = 0; fin.startFinal(); assert(fin.monster.enraged && fin.monster.speedCap() > HUNT.walk * 1.09, 'the final bell makes the player Headmaster 10% faster too');
+  void tunedHunt;
+}
 console.log('ABILITIES');
 {
   const { g, m, evs } = mk(3); m.grace = 0; m.cd = { tp: 0, trap: 0, lights: 0 };
@@ -119,5 +143,14 @@ console.log('DISCONNECT');
   assert(!g.monster.human && Math.abs(g.monster.x - 30.5) < 0.1 && !g.over, 'if the Headmaster player leaves, the AI takes over where he stood');
   assert(evs.some((e) => e.e === 'trap-'), 'his traps are cleared');
   run(g, 5); assert(!g.over, 'and the match carries on');
+}
+console.log('NO ENDLESS REVIVE LOOP (HUNT)');
+{
+  const { g, m } = mk(3); m.grace = 0; const a = g.players.get(2), b = g.players.get(3);
+  a.hp = 2; m.landHit(a);
+  assert(a.state === 'alive' && m.attackCd === HUNT.hitLock && m.slowT === HUNT.hitSlow, `a wounding hit still locks him out for ${HUNT.hitLock} s and slows him, so the wounded can run`);
+  m.attackCd = 0; m.slowT = 0; b.hp = 1; m.landHit(b);
+  assert(b.state === 'downed' && m.attackCd === HUNT.downLock && m.slowT === 0, `a hit that puts someone down only locks him out for ${HUNT.downLock} s, unslowed, so he can go for whoever tries the rescue`);
+  assert(g.initPayload(2).maxDowns === 2, 'survivors can be picked up twice in Hunt Mode; the third fall is final');
 }
 console.log(process.exitCode ? '\nSOME HUNT TESTS FAILED' : '\nALL HUNT TESTS PASSED');

@@ -4,7 +4,7 @@
 import { MAP, W, WALL, idx, floorY, inBounds, lineOfSight, ROOMS } from '../client/shared/map.js';
 import { Monster } from './monster.js';
 import { HumanMonster, HUNT } from './hunter.js';
-import { DIFFICULTY, ITEM_TYPES, cleanLook } from '../client/shared/defs.js';
+import { DIFFICULTY, ITEM_TYPES, MODIFIERS, cleanLook, cleanMods, cleanClass, cleanTune } from '../client/shared/defs.js';
 
 export const TICK_HZ = 15;
 const INV_SLOTS = 4;
@@ -19,11 +19,16 @@ const dist = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 export const ITEM_NAMES = {
   fuse: 'Fuse', key_principal: "Principal's Office Key", key_gate: 'Gate Key', battery: 'Battery',
   medkit: 'Medical Kit', lockpick: 'Lockpick', bottle: 'Glass Bottle', bell: 'Hand Bell', note: 'Note',
+  camera: 'Polaroid Camera', soda: 'Energy Drink', alarm: 'Alarm Clock', chalk: 'Chalk', teddy: "Thomas's Teddy Bear",
 };
+const ROLL_SECS = 30;   // how long roll call lasts
+const CHALK_MAX = 10;   // marks per player (the oldest is wiped when you draw another)
+const ALARM_DELAY = 8, ALARM_DUR = 7;
+const FINAL_SECS = 120; // the final bell: once the gate is open, this long to get out before it slams shut again
 
 export class Game {
   /** players: [{pid, name, look}], send(ev, data), sendTo(pid, ev, data), onEnd(summary) */
-  constructor({ players, send, sendTo, onEnd, mode = 'coop', difficulty = 'intermediate', hunterPid = null }) {
+  constructor({ players, send, sendTo, onEnd, mode = 'coop', difficulty = 'intermediate', hunterPid = null, mods = [], tune = null }) {
     this.send = send; this.sendTo = sendTo; this.onEnd = onEnd;
     // Hunt mode: one player is the Headmaster. Needs at least one survivor besides him.
     const hunter = mode === 'hunt' && players.length >= 2 ? players.find((p) => p.pid === hunterPid) || players[0] : null;
@@ -32,7 +37,10 @@ export class Game {
     if (hunter) { players = players.filter((p) => p !== hunter); difficulty = 'intermediate'; } // Hunt has its own fixed balance
     this.difficulty = DIFFICULTY[difficulty] ? difficulty : 'intermediate';
     this.D = DIFFICULTY[this.difficulty];
-    this.maxHp = hunter ? (players.length <= 2 ? 3 : 2) : this.D.hp; // one or two survivors get an extra hit
+    this.mods = Object.fromEntries(cleanMods(mods).map((k) => [k, true]));
+    this.tune = hunter ? cleanTune(tune) : null; // Hunt Mode balance, set by the host in the lobby
+    this.maxHp = this.mods.onehit ? 1 : hunter ? (this.tune.hits || (players.length <= 2 ? 3 : 2)) : this.D.hp; // one or two survivors get an extra hit
+    this.speedMul = (this.mods.restless ? 1.08 : 1) * (this.mods.sportsday ? 1.12 : 1); // how much faster the Headmaster is
     this.time = 0; this.over = false;
     this.doors = MAP.doors.map((d) => ({ ...d, open: false }));
     this.obj = { fusesFound: 0, fuses: 0, power: false, officeOpen: false, gateKey: false, security: false, gateOpen: false };
@@ -42,17 +50,23 @@ export class Game {
     players.forEach((pl, i) => {
       const s = MAP.playerSpawns[i % MAP.playerSpawns.length];
       this.players.set(pl.pid, {
-        id: pl.pid, name: pl.name, look: cleanLook(pl.look, i), x: s.x, y: 0, z: s.z, ry: Math.PI / 2 * -1, rx: 0, flags: 0,
-        hp: this.maxHp, state: 'alive', inv: new Array(INV_SLOTS).fill(null), hidden: -1, bleed: 0,
+        id: pl.pid, name: pl.name, look: cleanLook(pl.look, i), cls: cleanClass(pl.cls), x: s.x, y: 0, z: s.z, ry: Math.PI / 2 * -1, rx: 0, flags: 0,
+        hp: this.maxHp, state: 'alive', inv: new Array(INV_SLOTS).fill(null), hidden: -1, bleed: 0, downs: 0,
         lastT: 0, stepT: 0, reviving: null, vx: 0, vz: 0, sel: 0, pingT: -9, rootT: 0, voiceT: -9,
-        stats: { fuses: 0, revives: 0, hits: 0, thrown: 0, lures: 0, breath: 0 },
+        stats: { fuses: 0, revives: 0, hits: 0, thrown: 0, lures: 0, breath: 0, photos: 0, rolls: 0, teddy: 0, marks: 0 },
       });
     });
     this.lures = MAP.lures.map((l) => ({ ...l, readyAt: 0, used: false }));
     this.spawnItems();
+    // class kit: the Medic starts with a Med Kit
+    for (const p of this.players.values()) if (p.cls === 'medic') p.inv[0] = { id: this.nextItem++, type: 'medkit' };
+    this.final = null; // the final bell
     this.monster = hunter ? new HumanMonster(this, hunter.pid, hunter.name) : new Monster(this);
     this.paraT = rand(14, 22);
     this.pending = []; // delayed actions {t, fn}
+    this.marks = []; this.nextMark = 1; this.nextAlarm = 1; // chalk marks on the walls, wound-up alarm clocks
+    this.teddyDone = false;
+    this.roll = null; this.rollT = rand(130, 170) * (this.mods.restless ? 0.7 : 1); // roll call (Escape mode)
   }
 
   // ---------- setup ----------
@@ -81,13 +95,14 @@ export class Game {
     this.addItem('key_gate', gk.x, gk.y + 0.13, gk.z);
 
     // notes double as clues, so reading them out loud to the team matters
-    const noteRooms = shuffled.filter((r) => r !== keyRoom).slice(3, 8);
+    const noteRooms = shuffled.filter((r) => r !== keyRoom).slice(3, 9);
     const texts = [
       `Caretaker's log — "Locked the Principal's office after what happened. I'm not carrying that key around any more. Left it in the ${keyRoom.toUpperCase()}. If he wants it, let him look."`,
       `Maintenance memo — "Somebody keeps pulling the fuses. Found one in the ${fuseRooms[0].toUpperCase()} of all places. The box is in the boiler room, bottom of the east stairs. Three fuses or nothing works — not the lights, not the gate."`,
       `Torn page, a child's handwriting — "He hears you when you run. He does not see well if you stay low and keep the torch off. He checks the lockers when he is sure. He hates the bell. He ALWAYS comes when the lights come back."`,
       `Nurse's log, last entry — "The Peters boy swears he held his breath in a locker and the Headmaster walked right past him. Hold SPACE in there. Don't move. Don't breathe. It does not always work."`,
       `Music teacher's note — "He can't abide noise he didn't make. The piano brings him running, so does the old radio in the janitor's closet. And the great bell on the stage... ring that and the whole school hears it. Once. It cracked the last time."`,
+      `Letter from Mrs Peters, pinned under the MISSING poster — "Thomas never went anywhere without his teddy bear. If anyone finds it, please put it back in his locker in the Locker Room, the one with his name on it. I think it would help him rest."`,
     ];
     texts.forEach((text, i) => place('note', noteRooms[i] || pick(general), { text }));
 
@@ -100,6 +115,15 @@ export class Game {
     place('medkit', "Nurse's Office"); // the nurse always kept one
     place('lockpick', pick(general.filter((r) => r !== keyRoom)));
     place('bell', pick(general));
+    // v1.0 items: a camera whose flash blinds him, energy drinks, wind-up alarm clocks (decoys), chalk to mark walls
+    place('camera', pick(['Art Room', 'Library', 'Music Room', 'Classroom 1B'].filter((r) => general.includes(r))), { charges: 3 });
+    if (k > 1.2) place('camera', pick(general), { charges: 3 });
+    place('soda', 'Cafeteria'); for (let i = 0; i < Math.round(1.4 * k); i++) place('soda', pick(general));
+    for (let i = 0; i < 2; i++) place('alarm', pick(general));
+    place('chalk', pick(['Classroom 1A', 'Classroom 1B', 'Classroom 1C'])); place('chalk', pick(general));
+    if (this.mods.blackout) for (let i = 0; i < 3; i++) place('battery', pick(general));
+    // the side quest: Thomas's lost teddy bear, somewhere far from his locker
+    place('teddy', pick(general.filter((r) => r !== 'Locker Room' && r !== 'Boiler Room')));
     // the hidden archive behind the library bookshelf always rewards whoever finds it
     place('bell', 'Hidden Archive'); place('medkit', 'Hidden Archive'); place('battery', 'Hidden Archive');
   }
@@ -112,14 +136,18 @@ export class Game {
 
   initPayload(pid) {
     return {
-      you: pid, mode: this.mode, difficulty: this.difficulty, maxHp: this.maxHp,
-      role: pid === this.hunter ? 'monster' : 'survivor', hunter: this.hunter ? { id: this.hunter, name: this.hunterName } : null, hunt: HUNT,
+      you: pid, mode: this.mode, difficulty: this.difficulty, maxHp: this.maxHp, maxDowns: this.D.downs,
+      role: pid === this.hunter ? 'monster' : 'survivor', hunter: this.hunter ? { id: this.hunter, name: this.hunterName } : null, hunt: this.monster.H || HUNT,
+      final: this.final ? r2(this.final.until - this.time) : null,
       traps: this.monster.human ? this.monster.traps.map((t) => ({ id: t.id, p: [t.x, t.y, t.z] })) : [],
-      players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, look: p.look, x: p.x, y: p.y, z: p.z, state: p.state, hp: p.hp })),
+      players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, look: p.look, cls: p.cls, x: p.x, y: p.y, z: p.z, state: p.state, hp: p.hp, downs: p.downs, bleed: r2(p.bleed), away: p.away ? 1 : 0 })),
+      inv: this.players.has(pid) ? this.players.get(pid).inv.map((it) => (it ? { type: it.type, text: it.text, n: it.charges } : null)) : null,
       items: [...this.items.values()].map(pubItem),
       doors: this.doors.map((d) => [d.open ? 1 : 0, d.locked ? 1 : 0]),
       obj: this.obj, notes: this.notes,
       lures: this.lures.map((l) => [l.used ? 1 : 0, r2(Math.max(0, l.readyAt - this.time))]),
+      mods: Object.keys(this.mods), marks: this.marks, teddy: this.teddyDone ? 1 : 0,
+      roll: this.roll ? { id: this.roll.id, t: r2(this.roll.until - this.time) } : null,
       monster: this.monster.snap(),
       tick: TICK_HZ,
     };
@@ -175,7 +203,7 @@ export class Game {
 
   playerNear(p, x, z, reach = REACH) { return dist(p.x, p.z, x, z) <= reach; }
   hasItem(p, type) { return p.inv.findIndex((it) => it && it.type === type); }
-  sendInv(p) { this.emitTo(p, { e: 'inv', inv: p.inv.map((it) => (it ? { type: it.type, text: it.text } : null)) }); }
+  sendInv(p) { this.emitTo(p, { e: 'inv', inv: p.inv.map((it) => (it ? { type: it.type, text: it.text, n: it.charges } : null)) }); }
   consume(p, slot) { p.inv[slot] = null; this.sendInv(p); }
 
   onInteract(pid, m) {
@@ -201,6 +229,7 @@ export class Game {
           this.announce(`${p.name} unlocked the main gate. RUN.`, 'good');
           this.objChanged();
           this.noise(cx, cz, 40);
+          this.startFinal();
           return;
         }
         if (d.locked) {
@@ -305,11 +334,12 @@ export class Game {
         else if (L.kind === 'radio') this.msg(p, 'You turn the dial. It clicks... six seconds. Get away from it.', 'info');
         return;
       }
+      case 'teddy': return this.returnTeddy(p);
       case 'revive': {
         const t = this.players.get(id);
         if (!t || t.state !== 'downed' || !this.playerNear(p, t.x, t.z, 2.6)) return;
-        p.reviving = { target: id, t: 0 };
-        this.emit({ e: 'revive', by: p.id, target: id, on: 1, dur: REVIVE_TIME });
+        p.reviving = { target: id, t: 0, noiseT: 0 };
+        this.emit({ e: 'revive', by: p.id, target: id, on: 1, dur: REVIVE_TIME * (p.cls === 'medic' ? 0.5 : 1) });
         return;
       }
     }
@@ -378,11 +408,160 @@ export class Game {
         else this.msg(p, 'The bell cracks in your hand. Nothing was close enough to hear it... you hope.', 'info');
         break;
       }
+      case 'camera': return this.usePhoto(p, slot, it, m);
+      case 'soda':
+        this.consume(p, slot);
+        this.emitTo(p, { e: 'soda', t: 12 });
+        this.emit({ e: 'sfx', k: 'can', p: [r2(p.x), r2(p.y + 1.4), r2(p.z)] });
+        this.noise(p.x, p.z, 4, p.id);
+        break;
+      case 'alarm': return this.setAlarm(p, slot);
+      case 'chalk': return this.drawChalk(p, m);
+      case 'teddy': this.msg(p, "Take it to Thomas's locker in the Locker Room (the one with his name on it) and press E.", 'info'); break;
       case 'fuse': this.msg(p, 'Take it to the fuse box in the Boiler Room (basement).', 'info'); break;
       case 'key_principal': this.msg(p, "Use it on the Principal's Office door (east corridor).", 'info'); break;
       case 'key_gate': this.msg(p, 'Use it on the main gate at the west end of the Main Hall.', 'info'); break;
       case 'lockpick': this.msg(p, 'Use it on a locked door.', 'info'); break;
     }
+  }
+
+  /** Polaroid camera: a flash in his face (within 8 m, in front of you, in plain sight) drives him back. 3 shots. */
+  usePhoto(p, slot, it, m) {
+    if (this.time - (p.photoT ?? -9) < 1.2) return;
+    p.photoT = this.time;
+    it.charges = Math.max(0, (it.charges ?? 3) - 1);
+    const ry = Number.isFinite(Number(m.ry)) ? Number(m.ry) : p.ry;
+    this.emit({ e: 'photo', by: p.id, p: [r2(p.x), r2(p.y + 1.45), r2(p.z)] });
+    this.noise(p.x, p.z, 6, p.id);
+    const mo = this.monster, d = dist(p.x, p.z, mo.x, mo.z);
+    const fx = -Math.sin(ry), fz = -Math.cos(ry), dot = d > 0.01 ? ((mo.x - p.x) * fx + (mo.z - p.z) * fz) / d : 1;
+    const shut = (c) => { const di = MAP.doorAt[c]; return di >= 0 && !this.doors[di].open; };
+    if (mo.grace <= 0 && d < 8 && dot > 0.78 && Math.abs(floorY(mo.x, mo.z) - p.y) < 2 && lineOfSight(p.x, p.z, mo.x, mo.z, shut)) {
+      if (mo.human ? mo.flashed() : (mo.repel(3), true)) { p.stats.photos++; this.msg(p, 'The flash catches him full in the face. He reels back.', 'good'); }
+      else this.msg(p, 'He shields his eyes. Still dazzled from the last one.', 'warn');
+    }
+    if (it.charges <= 0) { this.consume(p, slot); this.msg(p, 'That was the last of the film.', 'info'); } else this.sendInv(p);
+  }
+  /** Wind an alarm clock and set it down: it rings a few seconds later and he comes to it. */
+  setAlarm(p, slot) {
+    this.consume(p, slot);
+    let x = p.x - Math.sin(p.ry) * 0.5, z = p.z - Math.cos(p.ry) * 0.5;
+    const c = inBounds(Math.floor(x), Math.floor(z)) ? idx(Math.floor(x), Math.floor(z)) : -1;
+    if (c < 0 || MAP.grid[c] !== 1 || MAP.blocked[c] || Math.abs(floorY(x, z) - p.y) > 0.5) { x = p.x; z = p.z; }
+    const id = this.nextAlarm++;
+    this.emit({ e: 'alarm', id, p: [r2(x), r2(floorY(x, z)), r2(z)], delay: ALARM_DELAY, dur: ALARM_DUR, by: p.id });
+    for (let t = 0; t < ALARM_DUR; t += 1.2) this.later(ALARM_DELAY + t, () => this.noise(x, z, 28, null, { kind: 'lure' }));
+    p.stats.lures++;
+    this.msg(p, `Wound up and set down. It goes off in ${ALARM_DELAY} seconds. Get away from it.`, 'info');
+  }
+  /** Chalk: a mark on the wall you are facing. m.sym: 0 = X, 1 = arrow left, 2 = arrow right, 3 = warning. */
+  drawChalk(p, m) {
+    if (this.time - (p.chalkT ?? -9) < 0.5) return;
+    p.chalkT = this.time;
+    const ry = Number.isFinite(Number(m.ry)) ? Number(m.ry) : p.ry, rx = Math.max(-1, Math.min(1, Number(m.rx) || 0));
+    const dx = -Math.sin(ry), dz = -Math.cos(ry);
+    let px = p.x, pz = p.z, hit = null;
+    for (let t = 0.05; t <= 2.6; t += 0.04) {
+      const nx = p.x + dx * t, nz = p.z + dz * t, cx = Math.floor(nx), cz = Math.floor(nz);
+      if (!inBounds(cx, cz)) break;
+      const c = idx(cx, cz);
+      if (MAP.doorAt[c] >= 0 || MAP.blocked[c]) break; // not on doors, and furniture or lockers are in the way
+      if (MAP.grid[c] === WALL) {
+        const pcx = Math.floor(px), pcz = Math.floor(pz);
+        if (cx !== pcx) hit = { x: pcx < cx ? cx : cx + 1, z: pz, n: [pcx < cx ? -1 : 1, 0] };
+        else hit = { x: px, z: pcz < cz ? cz : cz + 1, n: [0, pcz < cz ? -1 : 1] };
+        break;
+      }
+      px = nx; pz = nz;
+    }
+    if (!hit) return this.msg(p, 'Face a wall, close up, to draw on it.', 'info');
+    const sym = [0, 1, 2, 3].includes(m.sym | 0) ? m.sym | 0 : 0;
+    const mark = { id: this.nextMark++, by: p.id, p: [r2(hit.x + hit.n[0] * 0.012), r2(p.y + 1.45 + rx * 0.5), r2(hit.z + hit.n[1] * 0.012)], n: hit.n, sym };
+    const mine = this.marks.filter((k) => k.by === p.id);
+    if (mine.length >= CHALK_MAX) { const old = mine[0]; this.marks = this.marks.filter((k) => k !== old); this.emit({ e: 'chalk-', id: old.id }); }
+    this.marks.push(mark); p.stats.marks++;
+    this.emit({ e: 'chalk', ...mark });
+    this.noise(p.x, p.z, 2, p.id);
+  }
+  /** The side quest: put Thomas's teddy back in his locker. Everyone is patched up, the objectives light up, and he is driven off. */
+  returnTeddy(p) {
+    if (this.teddyDone) return;
+    const L = MAP.lockers[MAP.thomasLocker];
+    if (!this.playerNear(p, L.x + 0.5 + L.dx * 0.6, L.z + 0.5 + L.dz * 0.6, 2.5)) return;
+    const s = this.hasItem(p, 'teddy');
+    if (s < 0) return this.msg(p, "A locker with a name taped to it: T. PETERS. Something of his is missing.", 'info');
+    this.consume(p, s);
+    this.teddyDone = true; p.stats.teddy = 1;
+    this.emit({ e: 'ghost', p: [r2(L.x + 0.5 + L.dx * 0.75), 0, r2(L.z + 0.5 + L.dz * 0.75)], by: p.id });
+    // Thomas patches everyone up a little, and forgives one fall each
+    for (const q of this.players.values()) if (q.state === 'alive' && (q.hp < this.maxHp || q.downs > 0)) { q.hp = Math.min(this.maxHp, q.hp + 1); q.downs = Math.max(0, q.downs - 1); this.emit({ e: 'pstate', id: q.id, state: q.state, hp: q.hp, downs: q.downs }); }
+    const show = ['fuse', 'key_principal', 'key_gate', 'lockpick', 'medkit'];
+    const items = [...this.items.values()].filter((it) => show.includes(it.type) && !(it.type === 'fuse' && it.counted)).map((it) => [it.type, it.x, it.y + 0.2, it.z]);
+    this.emit({ e: 'reveal', items, t: 30 });
+    if (this.monster.human) this.monster.stun(4, 'ghost'); else this.monster.repel(8);
+    this.announce(`${p.name} gave Thomas his bear back. A small cold hand squeezes yours... and for a while, you can see where everything is.`, 'good');
+  }
+
+  /** The final bell: the gate is open, every light turns red, he is enraged, and the gate slams shut again in FINAL_SECS. */
+  startFinal() {
+    if (this.final) return;
+    this.final = { until: this.time + FINAL_SECS, next: this.time + 3 };
+    if (this.roll) this.endRoll(false);
+    this.monster.enrage?.();
+    this.emit({ e: 'finalbell', t: FINAL_SECS });
+    this.announce(`The final bell is ringing. The gate shuts again in ${FINAL_SECS / 60} minutes. Get out.`, 'bad');
+  }
+  tickFinal() {
+    const f = this.final;
+    if (this.time >= f.until) {
+      this.emit({ e: 'gateslam' });
+      const gate = this.doors[MAP.gate.id]; if (gate) { gate.open = false; gate.locked = true; this.emit({ e: 'door', id: gate.id, open: 0, locked: 1, by: 'ghost' }); }
+      this.obj.gateOpen = false;
+      for (const p of this.players.values()) if (p.state === 'alive' || p.state === 'downed') this.kill(p, 'was locked inside when the gate slammed shut');
+      this.final = null;
+      this.checkEnd();
+      return;
+    }
+    // the AI always has a rough idea where the nearest survivor is
+    if (this.time >= f.next && !this.monster.human) {
+      f.next = this.time + 4;
+      const m = this.monster, prey = [...this.players.values()].filter((q) => q.state === 'alive' && q.hidden < 0)
+        .sort((a, b) => dist(a.x, a.z, m.x, m.z) - dist(b.x, b.z, m.x, m.z))[0];
+      if (prey) this.noise(prey.x + rand(-2.5, 2.5), prey.z + rand(-2.5, 2.5), 999, null, { kind: 'roll' });
+    }
+  }
+
+  /** Roll call (Escape mode): the PA calls one student, and for a while he has a rough idea where they are. */
+  startRoll() {
+    const cands = [...this.players.values()].filter((q) => q.state === 'alive' && q.hidden < 0);
+    if (!cands.length || this.monster.state === 'chase' || this.monster.state === 'attack') { this.rollT = 20; return; }
+    const p = pick(cands);
+    this.roll = { id: p.id, until: this.time + ROLL_SECS, next: this.time + 5 };
+    this.emit({ e: 'rollcall', id: p.id, name: p.name, t: ROLL_SECS });
+  }
+  endRoll(survived) {
+    const p = this.players.get(this.roll.id);
+    if (survived && p) { p.stats.rolls++; this.msg(p, 'Roll call is over. You were not found.', 'good'); }
+    this.emit({ e: 'rollend', id: this.roll.id, ok: survived ? 1 : 0 });
+    this.roll = null;
+    this.rollT = rand(150, 210) * (this.mods.restless ? 0.7 : 1);
+  }
+  tickRoll(dt) {
+    if (this.mode !== 'coop' || this.final) return;
+    if (!this.roll) { if ((this.rollT -= dt) <= 0) this.startRoll(); return; }
+    const p = this.players.get(this.roll.id);
+    if (!p || p.state !== 'alive') return this.endRoll(false);
+    if (this.time >= this.roll.until) return this.endRoll(true);
+    if (this.time < this.roll.next) return;
+    this.roll.next = this.time + 5;
+    // hiding (a locker, or crouched under cover) keeps you off his mind
+    if (p.hidden >= 0 || (p.flags & 1 && MAP.cover[idx(Math.floor(p.x), Math.floor(p.z))])) return;
+    for (let i = 0; i < 12; i++) { // a rough guess, a few metres off
+      const a = rand(0, Math.PI * 2), r = rand(1.5, 4.5), x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r, cx = Math.floor(x), cz = Math.floor(z);
+      if (!inBounds(cx, cz) || MAP.grid[idx(cx, cz)] !== 1 || MAP.blocked[idx(cx, cz)] || Math.abs(floorY(x, z) - p.y) > 1) continue;
+      return this.noise(x, z, 999, null, { kind: 'roll' });
+    }
+    this.noise(p.x, p.z, 999, null, { kind: 'roll' });
   }
 
   /** Hunt mode: input from the player who is the Headmaster. */
@@ -481,7 +660,8 @@ export class Game {
     d.open = open;
     this.emit({ e: 'door', id: d.id, open: open ? 1 : 0, locked: d.locked ? 1 : 0, by });
     const cx = d.x + 0.5, cz = d.z + 0.5;
-    if (by !== 'monster') this.noise(cx, cz, d.kind === 'shelf' ? 13 : open ? 9 : 7);
+    const who = typeof by === 'number' ? this.players.get(by) : null;
+    if (by !== 'monster' && !(who && who.cls === 'mechanic' && d.kind === 'door')) this.noise(cx, cz, d.kind === 'shelf' ? 13 : open ? 9 : 7); // a Mechanic's doors make no sound
   }
 
   // ---------- health ----------
@@ -491,11 +671,21 @@ export class Game {
     p.hp -= 1;
     p.reviving = null;
     if (p.hp <= 0) {
-      p.state = 'downed'; p.bleed = this.D.bleed; p.hp = 0;
-      this.announce(`${p.name} is down! Reach them and hold your ground — press E to revive.`, 'bad');
+      // Each fall costs more, so two friends cannot trade revives forever: every down after the first
+      // bleeds out twice as fast, and past the difficulty's limit nobody gets back up.
+      p.downs++; p.hp = 0;
+      if (p.downs > this.D.downs) {
+        this.emit({ e: 'hit', id: p.id });
+        this.kill(p, 'went down one time too many. Nobody gets back up from that');
+        this.checkEnd();
+        return;
+      }
+      p.state = 'downed'; p.bleed = this.D.bleed * (p.downs > 1 ? 0.5 : 1);
+      const last = p.downs === this.D.downs;
+      this.announce(last ? `${p.name} is down, and this is their last chance. Another fall and they are gone.` : `${p.name} is down! Reach them and hold your ground — press E to revive.`, 'bad');
     }
     this.emit({ e: 'hit', id: p.id });
-    this.emit({ e: 'pstate', id: p.id, state: p.state, hp: p.hp, bleed: p.bleed });
+    this.emit({ e: 'pstate', id: p.id, state: p.state, hp: p.hp, bleed: p.bleed, downs: p.downs });
     // Hunt Mode: a survivor who survives a hit gets a short burst of speed to break away
     if (this.mode === 'hunt' && p.state === 'alive') this.emitTo(p, { e: 'adrenaline', t: HUNT.adrenaline });
     this.checkEnd();
@@ -503,8 +693,8 @@ export class Game {
   revive(t, hp, by) {
     by.stats.revives++;
     t.state = 'alive'; t.hp = hp; t.bleed = 0;
-    this.emit({ e: 'pstate', id: t.id, state: 'alive', hp });
-    this.announce(`${by.name} got ${t.name} back on their feet.`, 'good');
+    this.emit({ e: 'pstate', id: t.id, state: 'alive', hp, downs: t.downs });
+    this.announce(`${by.name} got ${t.name} back on their feet.${t.downs >= this.D.downs ? ` One more fall and ${t.name} is gone.` : ''}`, 'good');
   }
   kill(p, reason) {
     if (p.state === 'dead') return;
@@ -523,6 +713,7 @@ export class Game {
       this.hunter = null;
       this.monster = new Monster(this);
       this.monster.x = old.x; this.monster.z = old.z; this.monster.grace = 4;
+      if (this.final) this.monster.enrage(); // the final bell is still ringing
       this.emit({ e: 'hunterleft' });
       this.announce(`${this.hunterName} disconnected. The Headmaster is on his own now.`, 'bad');
       return;
@@ -534,6 +725,21 @@ export class Game {
     this.emit({ e: 'pleave', id: pid });
     this.announce(`${p.name} disconnected.`, 'bad');
     this.checkEnd();
+  }
+
+  /**
+   * A player's connection dropped (on) or came back (off). Their character stays where it was;
+   * anything that would otherwise carry on by itself (running footsteps, a revive, hiding in a
+   * locker) is stopped, so nobody can be "away" to their advantage.
+   */
+  setAway(pid, on) {
+    if (pid === this.hunter && this.monster.human) { const m = this.monster; m.sprinting = false; m.windup = 0; if (m.busyFn) { m.busy = 0; m.busyFn = null; } this.emit({ e: 'away', id: pid, on: on ? 1 : 0 }); return; }
+    const p = this.players.get(pid);
+    if (!p) return;
+    p.away = !!on; p.flags = 0; p.vx = 0; p.vz = 0;
+    if (p.reviving) { this.emit({ e: 'revive', by: p.id, target: p.reviving.target, on: 0 }); p.reviving = null; }
+    if (!on && p.hidden >= 0) this.exitLocker(p); // back in the match standing in front of the locker, not stuck inside it
+    this.emit({ e: 'away', id: pid, on: on ? 1 : 0 });
   }
 
   checkEnd() {
@@ -548,7 +754,7 @@ export class Game {
     if (this.over) return;
     this.over = true;
     const summary = {
-      win, time: Math.round(this.time), stage: this.stage(), obj: this.obj, difficulty: this.difficulty, mode: this.mode,
+      win, time: Math.round(this.time), stage: this.stage(), obj: this.obj, difficulty: this.difficulty, mode: this.mode, mods: Object.keys(this.mods), teddy: this.teddyDone,
       hunter: this.mode === 'hunt' ? { id: this.hunter, name: this.hunterName, hits: this.monster.human ? this.monster.stats.hits : 0 } : null,
       players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, state: p.state, t: p.escapedAt || null, stats: p.stats })),
     };
@@ -575,7 +781,7 @@ export class Game {
           p.stepT -= dt;
           if (p.stepT <= 0) {
             p.stepT = 0.5;
-            const r = p.flags & 1 ? 1.3 : p.flags & 4 ? 13 : 5;
+            const r = (p.flags & 1 ? 1.3 : p.flags & 4 ? 13 : 5) * (p.cls === 'sneak' ? 0.5 : 1);
             this.noise(p.x, p.z, r, p.id);
           }
         }
@@ -593,7 +799,9 @@ export class Game {
             p.reviving = null;
           } else {
             p.reviving.t += dt;
-            if (p.reviving.t >= REVIVE_TIME) { p.reviving = null; this.emit({ e: 'revive', by: p.id, target: t.id, on: 0 }); this.revive(t, 1, p); }
+            // dragging someone back to their feet is not quiet: he can hear it from a fair way off
+            if ((p.reviving.noiseT -= dt) <= 0) { p.reviving.noiseT = 1.2; this.noise(t.x, t.z, 9, p.id, { kind: 'revive' }); }
+            if (p.reviving.t >= REVIVE_TIME * (p.cls === 'medic' ? 0.5 : 1)) { p.reviving = null; this.emit({ e: 'revive', by: p.id, target: t.id, on: 0 }); this.revive(t, 1, p); }
           }
         }
       } else if (p.state === 'downed') {
@@ -603,10 +811,12 @@ export class Game {
     }
 
     this.monster.tick(dt);
+    this.tickRoll(dt);
+    if (this.final) { this.tickFinal(); if (this.over) return; }
 
     // randomised paranormal events (purely atmospheric, except falling objects make real noise)
     this.paraT -= dt;
-    if (this.paraT <= 0) { this.paraT = rand(11, 24) - this.stage(); this.paranormal(); } // something happens roughly every 15 seconds
+    if (this.paraT <= 0) { this.paraT = (rand(11, 24) - this.stage()) * (this.mods.restless ? 0.5 : 1); this.paranormal(); } // something happens roughly every 15 seconds
     for (const p of this.players.values()) if (this.time - p.lastT > 0.4) { p.vx *= 0.8; p.vz *= 0.8; } // stale velocity decays
 
     const snap = { t: Math.round(this.time * 1000), p: [], m: this.monster.snap() };

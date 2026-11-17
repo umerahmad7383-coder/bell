@@ -13,7 +13,7 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
 let child = null;
 process.on('uncaughtException', (err) => { console.error('FAIL (crash):', err); if (child) child.kill(); process.exit(1); });
 if (!process.env.TEST_URL) {
-  child = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, PORT: String(PORT), MONSTER_GRACE: '900' }, stdio: ['ignore', 'pipe', 'inherit'] });
+  child = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, PORT: String(PORT), MONSTER_GRACE: '900', RESUME_SECS: '1' }, stdio: ['ignore', 'pipe', 'inherit'] });
   await new Promise((res) => child.stdout.on('data', (d) => String(d).includes('listening') && res()));
 }
 
@@ -190,9 +190,12 @@ try {
   await sleep(400);
   assert(a.states.get(other.id) === 'escaped' && a.states.get(c.id) === 'escaped', 'two players escaped through the gate');
   assert(!a.over, 'match continues while a player is still inside');
-  // the last player leaves the game by disconnecting -> match must end gracefully as a win
+  // the last player leaves the game by disconnecting -> once their place stops being held (1 s in this
+  // test, 45 s by default), the match must end gracefully as a win
   carrier.s.disconnect();
-  await sleep(500);
+  await sleep(300);
+  assert(!other.over && other.msgs.some((m) => /lost their connection/.test(m)), "a dropped player's place is held at first, and everyone is told");
+  await sleep(1400);
   assert(other.over && other.over.win === true, 'disconnect handled: match ends, summary says the survivors won');
   assert(other.over.players.filter((p) => p.state === 'escaped').length === 2, 'summary lists who survived');
   assert(other.over.players.every((p) => p.stats && typeof p.stats.hits === 'number'), 'summary includes per-player stats');
@@ -238,6 +241,31 @@ try {
   const m0 = surv[1].lastSnap.m;
   assert(Math.abs(m0[0] - 20) > 5, 'a survivor cannot send Headmaster commands');
   d.s.disconnect(); e.s.disconnect(); f.s.disconnect();
+
+  console.log('DROPPED CONNECTION -> STRAIGHT BACK IN');
+  {
+    const g1 = new Bot('Gil'), h1 = new Bot('Hal'); await sleep(200);
+    const lc = await g1.call('lobby:create', { name: 'Gil' }); const hj = await h1.call('lobby:join', { code: lc.code, name: 'Hal' });
+    assert(lc.token && hj.token && lc.token !== hj.token, 'every seat gets its own private token');
+    h1.s.emit('lobby:ready', true); await sleep(100);
+    assert((await g1.call('lobby:start')).ok, 'match starts'); await sleep(300);
+    await h1.goto(12.5, 22.5, 0.3); await sleep(200);
+    const hx = h1.x;
+    h1.s.disconnect(); await sleep(300);
+    assert(g1.lobby.players.find((p) => p.id === hj.you).away && g1.msgs.some((m) => /Hal lost their connection/.test(m)), "the lobby shows Hal as reconnecting and the match goes on");
+    const h2 = new Bot('Hal'); await sleep(200);
+    assert(!(await h2.call('lobby:resume', { code: lc.code, token: 'not-the-token' })).ok, 'a wrong token cannot take over a seat');
+    const rr = await h2.call('lobby:resume', { code: lc.code, token: hj.token }); await sleep(300);
+    assert(rr.ok && rr.inGame && rr.you === hj.you, 'reconnecting with the token gives Hal his seat back');
+    const meBack = h2.g && h2.g.players.find((p) => p.id === hj.you);
+    assert(h2.g && h2.g.you === hj.you && meBack && Math.abs(meBack.x - hx) < 0.5, `he is sent the match as it stands now, standing where he was (${meBack && meBack.x.toFixed(1)} vs ${hx.toFixed(1)})`);
+    assert(!g1.lobby.players.find((p) => p.id === hj.you).away && g1.msgs.some((m) => /Hal is back/.test(m)), 'everyone sees him come back');
+    h2.s.disconnect(); await sleep(1600);
+    assert(g1.lobby.players.length === 1, 'someone who stays away longer than the hold is removed for good');
+    const h3 = new Bot('Hal'); await sleep(200);
+    assert(!(await h3.call('lobby:resume', { code: lc.code, token: hj.token })).ok, 'and their old token no longer works');
+    g1.s.disconnect(); h3.s.disconnect();
+  }
   console.log(process.exitCode ? '\nSOME TESTS FAILED' : '\nALL NETWORK TESTS PASSED');
 } catch (err) {
   console.error(err.message);

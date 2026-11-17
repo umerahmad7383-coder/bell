@@ -25,6 +25,7 @@
   <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="7.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 21c.6-4.2 3.3-6.5 7-6.5s6.4 2.3 7 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.8 1.8M16.7 16.7l1.8 1.8M5.5 18.5l1.8-1.8M16.7 7.3l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
   <symbol id="i-keys" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M7.5 14h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-pad" viewBox="0 0 24 24"><path d="M7.2 6.5h9.6a4.6 4.6 0 0 1 4.5 3.7l1 5.3a2.6 2.6 0 0 1-4.4 2.3L15.6 15.5H8.4l-2.3 2.3a2.6 2.6 0 0 1-4.4-2.3l1-5.3a4.6 4.6 0 0 1 4.5-3.7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M7.5 9.5v3M6 11h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="15.5" cy="10" r="1" fill="currentColor"/><circle cx="17.5" cy="12" r="1" fill="currentColor"/></symbol>
   <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
   <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
@@ -49,6 +50,8 @@
   <div id="prompt"></div>
   <div id="roomname"></div>
   <div id="objnow"></div>
+  <div id="rollcall" hidden></div>
+  <div id="netwarn" role="status" hidden><b>Connection lost</b><span>Getting you back in. Your place in the match is being held.</span></div>
   <div id="fps" hidden></div>
   <div id="mic" hidden></div>
   <div id="mhud" hidden></div>
@@ -72,7 +75,7 @@
     <ol id="objectives"></ol>
     <h3>Notes found</h3>
     <div id="notes"><p class="dim">Nothing yet. Notes are shared with everyone when picked up.</p></div>
-    <p class="dim small">Hold Tab to read. He hears running. Crouch (C) to stay quiet. Lockers, tables, beds and the seat rows hide you.</p>
+    <p class="dim small">Hold Tab to read. He hears running. Crouch (C) to stay quiet. Lockers, tables, beds and the seat rows hide you. If the PA calls your name, hide.</p>
   </div>
   <div id="hint"></div>
 </div>
@@ -103,6 +106,7 @@
           <button id="btn-controls" class="stud"><svg><use href="#i-keys"/></svg><span>Controls</span></button>
         </div>
         <div id="conn" class="conn">Connecting to the server…</div>
+        <p id="pad-status" class="pad-status" hidden></p>
         <div id="gpu-warn" class="error small" hidden></div>
       </div>
       <p class="foot">For 2 to 8 players. Play with headphones.</p>
@@ -137,6 +141,8 @@
         <section class="board register">
           <h3>Register <span id="lobby-count" class="dim"></span></h3>
           <ul id="lobby-players"></ul>
+          <h3>Your class</h3>
+          <div id="classes"></div>
           <div class="lobby-chat">
             <div id="lobby-chatlog"></div>
             <input id="lobby-chatinput" maxlength="160" placeholder="Message the lobby and press Enter">
@@ -149,8 +155,17 @@
             <label class="mode on" data-mode="coop"><input type="radio" name="mode" value="coop" checked><b>Escape</b><span>Everyone works together against the Headmaster.</span></label>
             <label class="mode" data-mode="hunt"><input type="radio" name="mode" value="hunt"><b>Hunt</b><span>One of you is the Headmaster. Needs at least 2 players.</span></label>
           </div>
-          <h3>Difficulty <span id="diff-note" class="dim"></span></h3>
-          <div id="difficulties"></div>
+          <div id="diff-block">
+            <h3>Difficulty <span id="diff-note" class="dim"></span></h3>
+            <div id="difficulties"></div>
+          </div>
+          <div id="tune-block" hidden>
+            <h3>Headmaster tuning <span id="tune-note" class="dim"></span></h3>
+            <div id="tune"></div>
+            <button id="btn-tune-reset" class="btn ghost">Reset to the defaults</button>
+          </div>
+          <h3>Detention rules <span id="mods-note" class="dim"></span></h3>
+          <div id="mods"></div>
         </section>
       </div>
 
@@ -193,6 +208,7 @@
         <label class="slider">Volume<input id="set-vol" type="range" min="0" max="1" step="0.02"></label>
         <label class="slider">Field of view<input id="set-fov" type="range" min="60" max="100" step="1"></label>
         <label class="slider">Brightness<input id="set-bright" type="range" min="0.6" max="1.8" step="0.05"></label>
+        <label class="slider">Controller look speed<input id="set-padsens" type="range" min="0.4" max="2.2" step="0.05"></label>
       </div>
       <label class="select">Graphics
         <select id="set-quality"><option value="low">Low: no shadows, fewer lights</option><option value="medium">Medium</option><option value="high">High</option></select>
@@ -204,6 +220,8 @@
         <label class="toggle"><input id="set-tips" type="checkbox"><span>Show control tips at the start of a match</span></label>
         <label class="toggle"><input id="set-ptt" type="checkbox"><span>Voice chat: hold V to talk instead of an open microphone</span></label>
         <label class="toggle"><input id="set-jumpscares" type="checkbox"><span>Jumpscares: a sudden face, a scream and a brief flash when he gets you</span></label>
+        <label class="toggle"><input id="set-padinvert" type="checkbox"><span>Controller: invert looking up and down</span></label>
+        <label class="toggle"><input id="set-vibrate" type="checkbox"><span>Controller: vibrate when he hits you</span></label>
       </div>
       <p class="dim small">Graphics quality applies from the next match. Everything else applies straight away. If High stutters, Medium looks close and costs far less.</p>
       <div class="row"><button id="btn-fullscreen" class="btn"><svg><use href="#i-expand"/></svg><span class="lbl">Fullscreen</span></button><button data-close class="btn primary">Done</button></div>
@@ -214,6 +232,11 @@
     <div class="board wide">
       <button class="close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button>
       <h2>Controls</h2>
+      <div class="tabs" role="tablist">
+        <button class="tab on" data-tab="kbm" role="tab" aria-selected="true"><svg><use href="#i-keys"/></svg><span class="lbl">Keyboard and mouse</span></button>
+        <button class="tab" data-tab="pad" role="tab" aria-selected="false"><svg><use href="#i-pad"/></svg><span class="lbl">Controller</span></button>
+      </div>
+      <div class="ctab" data-tab="kbm">
       <div class="controls-grid">
         <table class="keys">
           <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>Move (walking backwards is slower)</td></tr>
@@ -221,7 +244,7 @@
           <tr><td><kbd>C</kbd> or <kbd>Ctrl</kbd></td><td>Crouch: quiet, harder to see, fits under tables and beds</td></tr>
           <tr><td><kbd>E</kbd></td><td>Doors, items, lockers, the piano, revive</td></tr>
           <tr><td><kbd>F</kbd> or right click</td><td>Torch on or off</td></tr>
-          <tr><td>Left click</td><td>Use what you are holding</td></tr>
+          <tr><td>Left click</td><td>Use what you are holding: throw, flash the camera, drink, wind the alarm, draw with chalk</td></tr>
           <tr><td><kbd>1</kbd>–<kbd>4</kbd> or wheel</td><td>Choose an inventory slot</td></tr>
         </table>
         <table class="keys">
@@ -236,6 +259,21 @@
       </div>
       <p class="dim small"><b>As the Headmaster in Hunt:</b> left click attacks, hold <kbd>Shift</kbd> to rage, <kbd>R</kbd> teleports, <kbd>T</kbd> sets a trap, <kbd>Q</kbd> kills the lights, <kbd>E</kbd> forces doors and rips open lockers.</p>
       <p class="dim small">Browsers keep <kbd>Ctrl</kbd>+<kbd>W</kbd> for closing the tab. Crouch with <kbd>C</kbd>, or play in fullscreen from Settings.</p>
+      </div>
+      <div class="ctab" data-tab="pad" hidden>
+        <div class="pad-head">
+          <div class="seg" role="radiogroup" aria-label="Controller layout">
+            <button data-kind="xbox" role="radio">Xbox</button><button data-kind="ps" role="radio">PlayStation</button>
+          </div>
+          <p id="pad-conn" class="pad-conn"></p>
+        </div>
+        <div id="pad-diagram" class="pad-diagram"></div>
+        <div class="pad-extra">
+          <div><h3>As the Headmaster in Hunt</h3><table class="keys" id="pad-hunter"></table></div>
+          <div><h3>In menus</h3><table class="keys" id="pad-menus"></table></div>
+        </div>
+        <p class="dim small">Any controller the browser recognises works: Xbox, PlayStation 4 and 5, and most others that copy the Xbox layout. Plug it in or pair it, then press any button. Look speed, inverted look and vibration are in Settings.</p>
+      </div>
       <div class="row"><button data-close class="btn primary">Done</button></div>
     </div>
   </section>
@@ -263,7 +301,7 @@
     <div class="board wide end">
       <h1 id="end-title" class="end-title">Escaped</h1>
       <div id="end-sub" class="end-sub"></div>
-      <table id="end-table" class="summary"></table>
+      <div id="end-table" class="cards"></div>
       <div id="end-note" class="dim small"></div>
       <div class="row"><button id="btn-rematch" class="btn big primary" hidden>Back to the lobby</button><button id="btn-end-leave" class="btn ghost"><svg><use href="#i-exit"/></svg><span class="lbl">Leave</span></button></div>
     </div>

@@ -122,6 +122,7 @@ export class AudioSys {
     this.loops.growl = gr; this.loops.breathRate = bl;
   }
   stopAmbience() {
+    this.stopSiren();
     if (!this.ctx) return;
     for (const k of ['rain', 'wind', 'static', 'rumble']) if (this.loops[k]) this.loops[k].g.gain.value = 0;
     if (this.loops.pad) this.loops.pad.gain.value = 0;
@@ -285,6 +286,58 @@ export class AudioSys {
   }
   /** holding your breath: your own heartbeat, very loud, very close */
   heartbeat(k = 1) { this.tone({ freq: 58, to: 36, dur: 0.18, gain: 0.55 * k, wet: 0 }); this.tone({ freq: 52, to: 32, dur: 0.2, gain: 0.4 * k, when: 0.2, wet: 0 }); }
+  // ---- v1.0 ----
+  /** Polaroid: shutter clack, the flash charging back up */
+  photo(pos) {
+    this.noise({ dur: 0.04, type: 'highpass', freq: 2500, gain: 0.7, pos, wet: 0.3 });
+    this.noise({ dur: 0.06, type: 'bandpass', freq: 900, q: 2, gain: 0.5, pos, when: 0.05, wet: 0.3 });
+    this.tone({ freq: 2200, to: 5200, dur: 1.1, gain: 0.03, pos, when: 0.15, wet: 0.2 }); // the flash recharging
+    this.noise({ dur: 0.5, type: 'bandpass', freq: 3200, q: 3, gain: 0.12, pos, when: 0.2, wet: 0.2 }); // the print sliding out
+  }
+  /** a can opened and gulped */
+  can(pos) {
+    this.noise({ dur: 0.05, type: 'highpass', freq: 4000, gain: 0.6, pos, wet: 0.2 });
+    this.noise({ dur: 0.35, type: 'bandpass', freq: 5000, q: 0.8, gain: 0.25, pos, attack: 0.01, when: 0.04, wet: 0.2 }); // fizz
+    for (let i = 0; i < 3; i++) this.tone({ freq: 180, to: 120, dur: 0.12, gain: 0.12, pos, when: 0.5 + i * 0.32, wet: 0.1 }); // gulps
+  }
+  /** a wind-up alarm clock: ticking, then a frantic bell for `dur` seconds */
+  alarm(pos, delay = 8, dur = 7) {
+    this.noise({ dur: 0.25, type: 'bandpass', freq: 2600, q: 4, gain: 0.25, pos, wet: 0.2 }); // winding
+    for (let t = 0.4; t < delay; t += 0.5) this.noise({ dur: 0.02, type: 'highpass', freq: 3500, gain: 0.22, pos, when: t, wet: 0.2 });
+    for (let t = 0; t < dur; t += 0.06) this.tone({ freq: t % 0.12 < 0.06 ? 1850 : 2050, dur: 0.05, type: 'square', gain: 0.05, pos, when: delay + t, attack: 0.002, wet: 0.5 });
+  }
+  /** chalk scraping on a wall */
+  chalk(pos) { for (let i = 0; i < 3; i++) this.noise({ dur: 0.09, type: 'bandpass', freq: R(2600, 4200), q: 6, gain: 0.25, pos, when: i * 0.11, wet: 0.2 }); }
+  /** the PA system clicking on: a two-note chime through blown speakers */
+  pa() {
+    this.noise({ dur: 0.35, type: 'bandpass', freq: 1500, q: 0.7, gain: 0.3, wet: 0.8 });
+    this.tone({ freq: 659, dur: 0.7, type: 'triangle', gain: 0.22, when: 0.3, wet: 1.4 }); this.tone({ freq: 523, dur: 1, type: 'triangle', gain: 0.22, when: 0.75, wet: 1.4 });
+    this.noise({ dur: 4, type: 'bandpass', freq: 1800, q: 0.6, gain: 0.05, when: 1.2, wet: 1 }); // speaker hiss under the voice
+  }
+  /** Thomas, thanking you: a music box, a child's sigh */
+  ghostThanks(pos) {
+    const notes = [784, 659, 523, 659, 784, 1046, 988, 784];
+    notes.forEach((f, i) => this.tone({ freq: f, dur: 1.2, type: 'sine', gain: 0.11, pos, when: 0.3 + i * 0.32, attack: 0.002, wet: 1.6 }));
+    this.noise({ dur: 1.4, type: 'bandpass', freq: 900, q: 1.2, gain: 0.18, pos, attack: 0.5, when: 3.1, wet: 1.2 });
+  }
+  /** the final bell: a rising and falling air-raid siren under everything, for `dur` seconds */
+  siren(dur = 120) {
+    if (!this.ctx) return;
+    this.stopSiren();
+    const c = this.ctx, now = c.currentTime, o = c.createOscillator(), lfo = c.createOscillator(), depth = c.createGain(), g = this.out(null);
+    o.type = 'sawtooth'; o.frequency.value = 410; lfo.frequency.value = 1 / 6; depth.gain.value = 110; // 410 Hz ± 110, one wail every 6 s
+    lfo.connect(depth); depth.connect(o.frequency);
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400;
+    g.gain.setValueAtTime(0, now); g.gain.linearRampToValueAtTime(0.022, now + 2);
+    o.connect(lp); lp.connect(g); o.start(now); lfo.start(now); o.stop(now + dur); lfo.stop(now + dur);
+    this.sirenNodes = { o, lfo, g };
+  }
+  stopSiren() {
+    const s = this.sirenNodes; if (!s || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    try { s.g.gain.cancelScheduledValues(now); s.g.gain.setTargetAtTime(0, now, 0.25); s.o.stop(now + 1.5); s.lfo.stop(now + 1.5); } catch { /* already stopped */ }
+    this.sirenNodes = null;
+  }
   /** a dropped item hitting the floor */
   thud(pos, soft = false) { this.noise({ dur: 0.09, freq: soft ? 500 : 900, gain: soft ? 0.35 : 0.6, pos, wet: 0.4 }); this.tone({ freq: soft ? 140 : 220, to: 80, dur: 0.09, gain: 0.25, pos, wet: 0.3 }); }
 

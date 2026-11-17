@@ -59,6 +59,8 @@ export class Monster {
     this.chaseT = 0; this.chaseD0 = 0; this.interceptT = 0; this.chaseCheck = 0;
     this.checkingCover = false;
     this.guardCd = 0;
+    this.holdT = 0;          // a beat standing over someone he just put down, before he goes for their friend
+    this.guardBody = false;  // he put someone down with nobody around: he will come back to check on them
   }
 
   get aggr() { return this.g.aggression(); } // 0..~6, rises as objectives are completed
@@ -198,6 +200,9 @@ export class Monster {
     if (this.state === 'chase' && this.targetId === p.id && this.lostT < 1.2 && dist(this.x, this.z, p.x, p.z) < 14) this.sawHide = p.id;
   }
 
+  /** the final bell: faster, and he does not give up */
+  enrage() { this.enraged = true; }
+
   repel(seconds) {
     this.targetId = null; this.inspect = null;
     this.startRetreat(seconds);
@@ -307,12 +312,18 @@ export class Monster {
   // ----- main update -----
   tick(dt) {
     const g = this.g, D = this.D;
-    const mult = SPEED * D.speed;
+    const mult = SPEED * D.speed * (g.speedMul || 1) * (this.enraged ? 1.15 : 1); // match modifiers and the final bell make him faster
     const speedPatrol = (1.7 + 0.14 * this.aggr) * mult;
     const speedInvest = (2.7 + 0.15 * this.aggr) * mult;
     const speedChase = (4.55 + 0.17 * this.aggr) * mult;
-    const seen = this.state === 'retreat' || this.state === 'attack' || this.state === 'stalk' ? null : this.sense(dt);
     if (this.guardCd > 0) this.guardCd -= dt;
+    if (this.holdT > 0) { // standing over the one he just put down, looking at their friend
+      this.holdT -= dt;
+      const t = g.players.get(this.targetId);
+      if (t) { this.face(t.x, t.z, dt, 6); this.lastSeen = { x: t.x, z: t.z, vx: t.vx, vz: t.vz }; }
+      return;
+    }
+    const seen = this.state === 'retreat' || this.state === 'attack' || this.state === 'stalk' ? null : this.sense(dt);
 
     switch (this.state) {
       case 'patrol': {
@@ -361,7 +372,7 @@ export class Monster {
               const occ = [...g.players.values()].find((p) => p.hidden === L.id && p.state === 'alive');
               this.inspect = null;
               if (occ && this.holdsBreath(occ, L)) { occ.stats.breath++; g.emit({ e: 'lockerpass', id: L.id }); g.emitTo(occ, { e: 'msg', text: 'He listens... and moves on. Breathe. Quietly.', kind: 'good' }); break; }
-              if (occ) { g.pullFromLocker(occ); g.hitPlayer(occ); this.afterHit(); break; }
+              if (occ) { g.pullFromLocker(occ); g.hitPlayer(occ); this.afterHit(occ); break; }
             }
           }
           break;
@@ -422,7 +433,7 @@ export class Monster {
               g.emit({ e: 'lockerinspect', id: L.id });
               g.pullFromLocker(p); g.hitPlayer(p);
               this.sawHide = null;
-              this.afterHit();
+              this.afterHit(p);
             } else {
               this.repathT -= dt;
               if (this.repathT <= 0) { this.pathTo(fx, fz); this.repathT = 0.4; }
@@ -483,7 +494,7 @@ export class Monster {
         if (this.timer <= 0) {
           if (p && p.state === 'alive' && p.hidden < 0 && dist(this.x, this.z, p.x, p.z) < ATTACK_REACH && this.canSee(p)) {
             g.hitPlayer(p);
-            this.afterHit();
+            this.afterHit(p);
           } else if (p && p.state === 'alive') { this.lostT = 0; this.repathT = 0; this.setState('chase'); }
           else this.startSearch(this.x, this.z);
         }
@@ -496,7 +507,9 @@ export class Monster {
           this.awareness.clear();
           // [smart 2] a downed player is bait: he comes back for whoever tries the rescue
           const downed = [...g.players.values()].filter((p) => p.state === 'downed');
-          if (this.smart >= 2 && downed.length && this.guardCd <= 0 && Math.random() < (this.smart >= 3 ? 0.9 : 0.6)) {
+          const back = (this.guardBody ? [0.6, 0.85, 1, 1] : [0.3, 0.5, 0.7, 0.9])[Math.min(3, this.smart)];
+          this.guardBody = false;
+          if (downed.length && this.guardCd <= 0 && Math.random() < back) {
             const t = pick(downed), c = nearestFreeCell(t.x, t.z, 3);
             this.guardCd = 25;
             if (c && this.pathTo(c.x + 0.5, c.z + 0.5)) { this.noiseTarget = { x: t.x, z: t.z, loud: 99 }; this.setState('investigate'); break; }
@@ -520,7 +533,35 @@ export class Monster {
     this.setState('attack');
   }
 
-  afterHit() { this.startRetreat(Math.max(2, this.D.retreat - 0.6 * this.aggr)); }
+  /**
+   * After a hit he used to walk away every time, which let two friends trade revives forever: he put
+   * one down, left, the other picked them up, repeat. Now, if he puts someone down while a classmate
+   * is close or in sight, he stands over the body for a moment and then goes for the classmate. If
+   * nobody is around he still leaves (briefly), but comes back to check on the one he left behind.
+   * A hit that only wounds still sends him away, so the wounded get their chance to run.
+   */
+  afterHit(p) {
+    if (p && p.state !== 'alive') {
+      const w = this.witness(p);
+      if (w) { this.startChase(w); this.holdT = 0.9; return; }
+      this.guardBody = p.state === 'downed';
+      this.startRetreat(Math.min(this.D.retreat, 4));
+      return;
+    }
+    // he wounded someone: back off so they can run, but not for long if a classmate lies on the floor nearby
+    if ([...this.g.players.values()].some((q) => q.state === 'downed' && dist(q.x, q.z, this.x, this.z) < 10)) { this.guardBody = true; this.startRetreat(Math.min(this.D.retreat, 3)); return; }
+    this.startRetreat(Math.max(2, this.D.retreat - 0.6 * this.aggr));
+  }
+  /** the nearest other survivor he can see, or hear close by */
+  witness(p) {
+    let best = null, bd = 1e9;
+    for (const q of this.alive()) {
+      if (q === p || q.hidden >= 0 || Math.abs(q.y - this.y) > 2.2) continue;
+      const d = dist(this.x, this.z, q.x, q.z);
+      if (d < bd && (d < 7 || this.canSee(q, 16 * Math.max(1, this.D.vision)))) { best = q; bd = d; }
+    }
+    return best;
+  }
 
   snap() {
     return [round2(this.x), round2(this.z), round2(this.ry), MSTATE[this.state], this.crawl ? 1 : 0];

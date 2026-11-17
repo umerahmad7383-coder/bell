@@ -11,34 +11,80 @@
  *   3  + everything above, harder and sooner; walks straight to whoever threw the bottle
  * `windup` is how long his swing takes (he keeps lunging forward while it winds up, so walking
  * away does not dodge it). `breath` is the chance that holding your breath in a locker he is
- * checking makes him walk on.
+ * checking makes him walk on. `downs` is how many times a player can be put down and still be
+ * picked up again: the next time after that is fatal, and every down after the first bleeds out twice
+ * as fast (so two friends cannot trade revives forever).
  */
 export const DIFFICULTY = {
   beginner: {
     label: 'Beginner', blurb: 'Slow, short-sighted and easy to fool. You can take three hits. Extra supplies.',
     speed: 0.85, vision: 0.8, detect: 0.65, hearing: 0.75, grace: 25, lost: 2.2, search: 0.7, locker: 0.4,
-    retreat: 10, doorWait: 1.5, hp: 3, bleed: 110, stalk: 1.6, smart: 0, supplies: 1.5, aggr: 0.6, bell: 12, windup: 0.62, breath: 0.9,
+    retreat: 10, doorWait: 1.5, hp: 3, bleed: 110, downs: 3, stalk: 1.6, smart: 0, supplies: 1.5, aggr: 0.6, bell: 12, windup: 0.62, breath: 0.9,
   },
   intermediate: {
     label: 'Intermediate', blurb: 'The standard Headmaster. Predicts where you ran, checks lockers, patrols near your objective.',
     speed: 1, vision: 1, detect: 1, hearing: 1, grace: 12, lost: 3, search: 1, locker: 1,
-    retreat: 7, doorWait: 1, hp: 2, bleed: 80, stalk: 1, smart: 1, supplies: 1, aggr: 1, bell: 9, windup: 0.52, breath: 0.7,
+    retreat: 7, doorWait: 1, hp: 2, bleed: 80, downs: 2, stalk: 1, smart: 1, supplies: 1, aggr: 1, bell: 9, windup: 0.52, breath: 0.7,
   },
   hard: {
     label: 'Hard', blurb: 'Faster and sharper. Cuts you off, looks under tables, guards the wounded, and stops falling for bottles.',
     speed: 1.08, vision: 1.2, detect: 1.4, hearing: 1.25, grace: 8, lost: 4.5, search: 1.4, locker: 1.6,
-    retreat: 5, doorWait: 0.7, hp: 2, bleed: 60, stalk: 0.7, smart: 2, supplies: 0.8, aggr: 1.15, bell: 8, windup: 0.44, breath: 0.5,
+    retreat: 5, doorWait: 0.7, hp: 2, bleed: 60, downs: 2, stalk: 0.7, smart: 2, supplies: 0.8, aggr: 1.15, bell: 8, windup: 0.44, breath: 0.5,
   },
   nightmare: {
     label: 'Nightmare', blurb: 'You cannot outrun him. One hit and you are down. Fewer supplies. He learns how you play.',
     speed: 1.16, vision: 1.4, detect: 2, hearing: 1.5, grace: 5, lost: 6, search: 1.8, locker: 2.2,
-    retreat: 3.5, doorWait: 0.45, hp: 1, bleed: 45, stalk: 0.5, smart: 3, supplies: 0.6, aggr: 1.3, bell: 6, windup: 0.36, breath: 0.35,
+    retreat: 3.5, doorWait: 0.45, hp: 1, bleed: 45, downs: 1, stalk: 0.5, smart: 3, supplies: 0.6, aggr: 1.3, bell: 6, windup: 0.36, breath: 0.35,
   },
 };
 export const DIFFICULTY_ORDER = ['beginner', 'intermediate', 'hard', 'nightmare'];
 
 /** Index in this list is sent in snapshots to say what a player is holding (0 = empty hand). */
-export const ITEM_TYPES = ['', 'fuse', 'key_principal', 'key_gate', 'battery', 'medkit', 'lockpick', 'bottle', 'bell'];
+export const ITEM_TYPES = ['', 'fuse', 'key_principal', 'key_gate', 'battery', 'medkit', 'lockpick', 'bottle', 'bell', 'camera', 'soda', 'alarm', 'chalk', 'teddy'];
+
+/**
+ * Detention rules: optional match modifiers the host can switch on in the lobby (any combination).
+ */
+export const MODIFIERS = {
+  onehit: { label: 'One strike', blurb: 'Everyone goes down in a single hit.' },
+  blackout: { label: 'Lights out', blurb: 'Torches drain twice as fast. A few more batteries lie around.' },
+  restless: { label: 'Restless school', blurb: 'Twice the ghostly happenings, roll call comes sooner, and he walks a little faster.' },
+  sportsday: { label: 'Sports day', blurb: 'Nobody ever runs out of stamina, but he is 12% faster.' },
+};
+export const MODIFIER_ORDER = Object.keys(MODIFIERS);
+
+/** Survivor classes: each player picks one in the lobby. */
+export const CLASSES = {
+  athlete: { label: 'Athlete', icon: '🏃', blurb: 'Sprints a third longer and gets their breath back faster.' },
+  medic: { label: 'Medic', icon: '⛑️', blurb: 'Revives twice as fast and starts with a Med Kit.' },
+  mechanic: { label: 'Mechanic', icon: '🔧', blurb: 'Senses fuses through walls nearby and opens doors silently.' },
+  sneak: { label: 'Sneak', icon: '🤫', blurb: 'Footsteps carry half as far. Holds their breath 50% longer.' },
+};
+export const CLASS_ORDER = Object.keys(CLASSES);
+export const cleanClass = (c) => (CLASSES[c] ? c : 'athlete');
+
+/**
+ * Hunt Mode tuning: the host can rebalance the player Headmaster from the lobby.
+ * hits = how many hits put a survivor down (0 = automatic: 3 with one or two survivors, otherwise 2).
+ */
+export const TUNE = {
+  speed: { label: 'His speed', min: 80, max: 120, step: 5, def: 100, unit: '%' },
+  vision: { label: 'How far he sees in the dark', min: 4, max: 10, step: 0.5, def: 6, unit: ' m' },
+  hearing: { label: 'How far he hears', min: 50, max: 125, step: 5, def: 75, unit: '%' },
+  cooldowns: { label: 'Teleport, trap and lights cooldowns', min: 50, max: 200, step: 10, def: 100, unit: '%' },
+  hits: { label: 'Hits to put a survivor down', min: 0, max: 4, step: 1, def: 0, unit: '' },
+};
+export const TUNE_ORDER = Object.keys(TUNE);
+export function cleanTune(t) {
+  const out = {};
+  for (const k of TUNE_ORDER) {
+    const d = TUNE[k], raw = t ? t[k] : undefined;
+    const v = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN; // missing = default (Number(null) would be 0)
+    out[k] = Number.isFinite(v) ? Math.min(d.max, Math.max(d.min, Math.round(v / d.step) * d.step)) : d.def;
+  }
+  return out;
+}
+export function cleanMods(list) { return [...new Set((Array.isArray(list) ? list : []).filter((k) => MODIFIERS[k]))]; }
 
 /** Character creator options. A "look" is an object of indexes into these lists. */
 export const LOOKS = {
