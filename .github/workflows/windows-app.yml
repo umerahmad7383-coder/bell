@@ -33,6 +33,18 @@ jobs:
         working-directory: desktop
         run: npm install --no-audit --no-fund
 
+      # GitHub only publishes a release for a version tag that exists (v2.0.0, v2.0.1, ...), so make it first
+      - name: Tag this version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null; then
+            echo "Tag v$VERSION already exists"
+          else
+            git tag "v$VERSION"
+            git push origin "v$VERSION"
+          fi
+
       - name: Build the installer and publish the release
         working-directory: desktop
         env:
