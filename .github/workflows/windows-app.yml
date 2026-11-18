@@ -1,0 +1,47 @@
+# Builds the Windows installer (desktop/) on GitHub's Windows machines and publishes it as a GitHub Release.
+# Installed copies of the game see the new release and update themselves.
+#
+# Runs when:
+#   - you change desktop/package.json on the main branch (bump "version" there to ship a new build), or
+#   - you press "Run workflow" on the Actions tab.
+name: Windows app
+
+on:
+  push:
+    branches: [main, master]
+    paths: ['desktop/package.json']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # lets the build create the release and upload the installer
+
+concurrency:
+  group: windows-app
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        working-directory: desktop
+        run: npm install --no-audit --no-fund
+
+      - name: Build the installer and publish the release
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --x64 --publish always
+
+      - name: Keep a copy on the run page too
+        uses: actions/upload-artifact@v4
+        with:
+          name: The-Last-Bell-Setup
+          path: desktop/dist/*.exe
+          retention-days: 14
