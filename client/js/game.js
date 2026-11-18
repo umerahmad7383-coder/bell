@@ -9,12 +9,22 @@ import { MonsterModel, PlayerModel, PLAYER_COLORS } from './entities.js';
 import { ViewModel } from './viewmodel.js';
 import { ITEM_TYPES, DIFFICULTY, CLASSES } from '../shared/defs.js';
 import { input, BTN, glyph, label, fill } from './input.js';
+import { Post } from './post.js';
+import { RoomEnvironment } from '../vendor/jsm/environments/RoomEnvironment.js';
+import { is as keyIs, held as keyHeld, keyOf } from './keys.js';
+import { TorchBeam, WorldBeam, Dust } from './atmos.js';
+import { applyLightmaps } from './lightmap.js';
+import { Props } from './props.js';
 
 export const QUALITY = {
   // lights = ceiling lights that are real light sources once the power is on; darkLights = while it is off
-  low: { maxDpr: 1, scale: 0.75, shadows: false, shadowSize: 0, lights: 2, darkLights: 1, spots: 1, gloss: false },
-  medium: { maxDpr: 1, scale: 1, shadows: true, shadowSize: 1024, lights: 4, darkLights: 2, spots: 2, gloss: false },
-  high: { maxDpr: 1.5, scale: 1, shadows: true, shadowSize: 2048, lights: 6, darkLights: 2, spots: 3, gloss: true },
+  // texScale = textures painted at 2x/3x; detail = relief and roughness maps; gloss = physically based
+  // floors, lockers and doors; pbrAll = every surface; env = soft reflections; post/bloom/aa/ao = the
+  // post-processing chain (post.js); beam/dust = the torch's visible beam and the dust floating in it
+  low: { maxDpr: 1, scale: 0.75, shadows: false, shadowSize: 0, lights: 2, darkLights: 1, spots: 1, gloss: false, texScale: 1, aniso: 2, detail: false, post: false, beam: false, dust: 0 },
+  medium: { maxDpr: 1, scale: 1, shadows: true, shadowSize: 1024, lights: 4, darkLights: 2, spots: 2, gloss: false, texScale: 2, aniso: 4, detail: true, post: true, bloom: true, aa: 'fxaa', beam: true, beamSlices: 10, dust: 140 },
+  high: { maxDpr: 1.5, scale: 1, shadows: true, shadowSize: 2048, lights: 6, darkLights: 2, spots: 3, gloss: true, texScale: 2, aniso: 8, detail: true, env: true, post: true, bloom: true, aa: 'smaa', beam: true, beamSlices: 16, dust: 260 },
+  ultra: { maxDpr: 2, scale: 1, shadows: true, shadowSize: 4096, softShadows: false, lights: 8, darkLights: 3, spots: 4, gloss: true, pbrAll: true, texScale: 3, aniso: 16, detail: true, env: true, post: true, bloom: true, aa: 'msaa', ao: true, beam: true, beamSlices: 22, dust: 420 },
 };
 export const ITEM_HINT = {
   fuse: 'Fuse — carry it to the fuse box in the Boiler Room and press {interact}',
@@ -28,7 +38,7 @@ export const ITEM_HINT = {
   camera: 'Camera — {use} to flash it in his face (within 8 m); he reels back',
   soda: 'Energy Drink — {use}: unlimited stamina for 12 seconds',
   alarm: 'Alarm Clock — {use} to wind it and set it down; it rings in 8 s and he comes to it',
-  chalk: 'Chalk — {use} marks the wall you face: X. Hold A or D for an arrow, S for a warning',
+  chalk: 'Chalk — {use} marks the wall you face: X. Hold {left} or {right} for an arrow, {back} for a warning',
   teddy: "Thomas's Teddy — put it back in his locker in the Locker Room (press {interact} there)",
 };
 const DROP_HINT = ' · {drop} drop · hold {drop} to toss';
@@ -51,16 +61,18 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 export class Game {
-  constructor({ renderer, socket, init, settings, audio, RAPIER, ui, voice }) {
+  constructor({ renderer, socket, init, settings, audio, RAPIER, ui, voice, lightmaps }) {
     this.r = renderer; this.s = socket; this.set = settings; this.audio = audio; this.ui = ui; this.voice = voice || null;
     this.role = init.role || 'survivor'; this.mode = init.mode || 'coop'; this.hunt = init.hunt || {}; this.hunterId = init.hunter ? init.hunter.id : null;
-    const Q = (this.Q = QUALITY[settings.quality] || QUALITY.medium);
+    // (a test hook: localStorage 'lastbell.gfxtest' can override single settings of the preset)
+    let over = null; try { over = JSON.parse(localStorage.getItem('lastbell.gfxtest') || 'null'); } catch { /* none */ }
+    const Q = (this.Q = { ...(QUALITY[settings.quality] || QUALITY.medium), ...(over || {}) });
     // resolution: starts at the quality preset and is then tuned automatically to hold a smooth frame rate
-    this.basePR = Math.min(window.devicePixelRatio || 1, Q.maxDpr) * Q.scale;
+    this.basePR = Math.min(window.devicePixelRatio || 1, Q.maxDpr) * Q.scale * (settings.res || 1);
     this.res = { scale: 1, ceil: 1, ceilUntil: 0, acc: 0, n: 0, good: 0, raisedAt: -99 }; this.fps = 0;
     renderer.setPixelRatio(this.basePR);
     renderer.shadowMap.enabled = Q.shadows;
-    renderer.shadowMap.type = THREE.PCFShadowMap; // the soft variant costs several times more per pixel
+    renderer.shadowMap.type = Q.softShadows ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap; // soft costs several times more per pixel: Ultra only
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = settings.bright;
 
@@ -73,18 +85,36 @@ export class Game {
     scene.add(this.cam);
     this.amb = new THREE.AmbientLight(0x7486a8, 0.36); scene.add(this.amb); this.ambBase = 0.36;
 
-    this.T = buildTextures();
+    this.T = buildTextures(Q);
     this.world = buildWorld(scene, this.T, Q);
+    // baked path-traced lighting for the static school (lightmap.js); without it the old real-time lighting is used
+    this.world.lm = Q.baked === false ? null : applyLightmaps(this.world, lightmaps);
+    // High and Ultra: a faint reflection of a room for glossy floors, lockers and metal to pick up
+    if (Q.env) {
+      const pm = new THREE.PMREMGenerator(renderer);
+      this.envRT = pm.fromScene(new RoomEnvironment(), 0.04); pm.dispose();
+      scene.environment = this.envRT.texture; scene.environmentIntensity = 0.06;
+    }
     this.ph = buildPhysics(RAPIER);
+    // loose clutter with real physics: you, your friends and he knock it about (props.js)
+    this.props = Q.props === false ? null : new Props(scene, this.ph, RAPIER, Q, audio);
+    if (this.props) this.ph.events = this.props.events;
 
     // own flashlight, held slightly right of the eye so it throws visible shadows
     const fl = (this.flash = new THREE.SpotLight(0xfff1d6, 0, 32, 0.52, 0.6, 1.05));
     fl.position.set(-0.2, -0.2, 0.02); fl.target.position.set(-0.03, -0.04, -6); // it is in your left hand
     this.cam.add(fl, fl.target);
     if (Q.shadows) { fl.castShadow = true; fl.shadow.mapSize.setScalar(Q.shadowSize); fl.shadow.camera.near = 0.3; fl.shadow.camera.far = 30; fl.shadow.bias = -0.0015; fl.shadow.normalBias = 0.03; }
+    // the torch's beam in the dusty air, and dust everywhere (Medium and up)
+    this.beam = Q.beam && this.role !== 'monster' ? new TorchBeam(this.cam, fl, 9, 0.4, Q.beamSlices || 16) : null;
+    this.dust = Q.dust ? new Dust(scene, Q.dust) : null;
     this.spots = [];
     // teammates' torches: no point paying for spotlights nobody can be holding
-    for (let i = 0; i < Math.min(Q.spots, init.players.filter((p) => p.id !== init.you).length); i++) { const s = new THREE.SpotLight(0xfff1d6, 0, 26, 0.5, 0.6, 1.05); scene.add(s, s.target); this.spots.push(s); }
+    for (let i = 0; i < Math.min(Q.spots, init.players.filter((p) => p.id !== init.you).length); i++) {
+      const s = new THREE.SpotLight(0xfff1d6, 0, 26, 0.5, 0.6, 1.05); scene.add(s, s.target);
+      if (Q.beam) s.userData.beam = new WorldBeam(scene);
+      this.spots.push(s);
+    }
 
     this.monster = new MonsterModel(this.T); scene.add(this.monster.group);
     // a second copy of him for things that are not really there
@@ -105,6 +135,7 @@ export class Game {
         // your own body (headless, so the camera is not inside a skull) and first-person hands
         this.body = new PlayerModel(p.name, i, p.look, { firstPerson: true }); scene.add(this.body.group);
         this.vm = new ViewModel(p.look, this.T);
+        if (this.envRT) this.vm.setEnv(this.envRT.texture);
       }
     });
     this.me = this.roster.get(this.id);
@@ -172,7 +203,7 @@ export class Game {
     this.resize();
     this.clock = performance.now();
     this.raf = requestAnimationFrame(this.loop);
-    window.__lb = this; this.__fy = floorY; // handy for debugging / automated tests
+    window.__lb = this; this.__fy = floorY; this.__THREE = THREE; // handy for debugging / automated tests
   }
 
   // ------------------------------------------------------------------ input & network wiring
@@ -282,30 +313,30 @@ export class Game {
     if (this.chatOpen || this.offline || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (this.ui.blocked()) return;
     const c = e.code;
-    if (c === 'Tab') { e.preventDefault(); $('notebook').hidden = !down; return; }
-    if (e.ctrlKey && ['KeyS', 'KeyD', 'KeyA', 'KeyE', 'KeyF', 'KeyG'].includes(c)) e.preventDefault(); // keep browser shortcuts out of the way while crouching
+    if (c === 'Tab' || c === 'Space' || c === 'Backquote' || /^F\d$/.test(c) || c.startsWith('Alt')) e.preventDefault(); // nothing the browser would do with these is wanted mid-match
+    if (keyIs('notebook', c)) { e.preventDefault(); $('notebook').hidden = !down; return; }
+    if (e.ctrlKey && /^Key[A-Z]$/.test(c)) e.preventDefault(); // keep browser shortcuts out of the way while crouching
     this.keys[c] = down;
-    if (this.voice) { if (c === 'KeyV') this.voice.setPttDown(down); else if (c === 'KeyM' && down && !e.repeat && this.voice.enabled) { this.voice.setMuted(!this.voice.muted); this.audio.click(); } }
-    if (c === 'Space') e.preventDefault();
-    if (c === 'KeyG' && this.role !== 'monster') { // tap = drop, hold and release = toss
+    if (this.voice) { if (keyIs('talk', c)) this.voice.setPttDown(down); else if (keyIs('mute', c) && down && !e.repeat && this.voice.enabled) { this.voice.setMuted(!this.voice.muted); this.audio.click(); } }
+    if (keyIs('drop', c) && this.role !== 'monster') { // tap = drop, hold and release = toss
       if (down && !e.repeat && this.gHeld === null && this.inv[this.sel]) this.gHeld = this.time;
       else if (!down && this.gHeld !== null) { const held = this.time - this.gHeld; this.gHeld = null; this.dropSelected(held); }
       return;
     }
     if (!down || e.repeat) return;
     if (this.role === 'monster') {
-      if (c === 'Enter') { e.preventDefault(); this.openChat(); }
-      else if (c === 'KeyE') this.interact();
-      else if (c === 'KeyQ') this.s.emit('g:mact', { k: 'lights' });
-      else if (c === 'KeyR') this.s.emit('g:mact', { k: 'tp' });
-      else if (c === 'KeyT') this.s.emit('g:mact', { k: 'trap' });
+      if (keyIs('chat', c)) { e.preventDefault(); this.openChat(); }
+      else if (keyIs('interact', c)) this.interact();
+      else if (keyIs('ping', c)) this.s.emit('g:mact', { k: 'lights' });
+      else if (keyIs('teleport', c)) this.s.emit('g:mact', { k: 'tp' });
+      else if (keyIs('trap', c)) this.s.emit('g:mact', { k: 'trap' });
       return;
     }
-    if (c === 'Enter') { e.preventDefault(); this.openChat(); }
-    else if (c === 'KeyE') this.interact();
-    else if (c === 'KeyF') this.toggleFlash();
-    else if (c === 'KeyQ') this.ping();
-    else if ((c === 'KeyC' || c === 'ControlLeft' || c === 'ControlRight') && this.set.togglecrouch) this.crouchLatch = !this.crouchLatch;
+    if (keyIs('chat', c)) { e.preventDefault(); this.openChat(); }
+    else if (keyIs('interact', c)) this.interact();
+    else if (keyIs('torch', c)) this.toggleFlash();
+    else if (keyIs('ping', c)) this.ping();
+    else if (keyIs('crouch', c) && this.set.togglecrouch) this.crouchLatch = !this.crouchLatch;
     else if (/^Digit[1-4]$/.test(c)) this.select(Number(c[5]) - 1);
   }
   select(i) { this.sel = i; this.gHeld = null; this.renderInv(); this.audio.ui(); }
@@ -409,10 +440,10 @@ export class Game {
     if (this.mwind > 0) this.mwind -= dt;
     const frozen = this.ended || h.grace > 0 || this.mbusy > 0;
     let fwd = 0, strafe = 0;
-    if (!frozen && !this.chatOpen && !this.ui.blocked()) { fwd = (K.KeyW || K.ArrowUp ? 1 : 0) - (K.KeyS || K.ArrowDown ? 1 : 0); strafe = (K.KeyD || K.ArrowRight ? 1 : 0) - (K.KeyA || K.ArrowLeft ? 1 : 0); }
+    if (!frozen && !this.chatOpen && !this.ui.blocked()) { fwd = (keyHeld(K, 'forward') ? 1 : 0) - (keyHeld(K, 'back') ? 1 : 0); strafe = (keyHeld(K, 'right') ? 1 : 0) - (keyHeld(K, 'left') ? 1 : 0); }
     let mag = 1;
     if (!frozen) { const [pf, ps] = this.padMove(); const pm = Math.hypot(pf, ps); if (pm > Math.hypot(fwd, strafe) * 0.5 && pm > 0) { fwd = pf; strafe = ps; mag = Math.min(1, pm); } }
-    const rage = (K.ShiftLeft || K.ShiftRight || (input.connected && input.held(BTN.LT))) && fwd > 0.35 && h.rage > 0.03 && !(h.slow > 0) && !(h.stun > 0);
+    const rage = (keyHeld(K, 'sprint') || (input.connected && input.held(BTN.LT))) && fwd > 0.35 && h.rage > 0.03 && !(h.slow > 0) && !(h.stun > 0);
     let speed = rage ? H.rage : H.walk;
     if (h.stun > 0) speed = H.walk * 0.3; else if (this.mwind > 0) speed *= 0.8; else if (h.slow > 0) speed = H.walk * 0.5;
     if (fwd < 0) speed *= BACKPEDAL; else if (Math.abs(strafe) > fwd) speed *= STRAFE;
@@ -557,7 +588,7 @@ export class Game {
     if (['bottle', 'bell', 'battery', 'medkit', 'camera', 'soda', 'chalk'].includes(it.type)) this.vm.useItem(it.type === 'camera' ? 'bell' : it.type);
     if (it.type === 'alarm') this.vm.reach();
     const K = this.keys, [plx, ply] = input.connected ? input.axes : [0, 0];
-    const sym = K.KeyA || plx < -0.5 ? 1 : K.KeyD || plx > 0.5 ? 2 : K.KeyS || ply > 0.5 ? 3 : 0; // chalk: X, or an arrow, or a warning
+    const sym = keyHeld(K, 'left') || plx < -0.5 ? 1 : keyHeld(K, 'right') || plx > 0.5 ? 2 : keyHeld(K, 'back') || ply > 0.5 ? 3 : 0; // chalk: X, or an arrow, or a warning
     this.s.emit('g:use', { slot: this.sel, ry: this.yaw, rx: this.pitch, sym });
   }
   interact() {
@@ -815,6 +846,12 @@ export class Game {
     if (this.role === 'monster') this.updateHunter(dt); else this.updateLocal(dt);
     this.updateRemotes(dt, now);
     this.updateMonster(dt, now);
+    if (this.props) {
+      // everyone else's body shoves the clutter too (a teammate barging through, him crashing down a corridor)
+      for (const r of this.remotes.values()) if (r.visible) this.props.pusher(r.id, r.cur.x, r.cur.y, r.cur.z, r.cur.f & 1 ? 0.15 : 0.55, 0.3);
+      if (this.role !== 'monster' && this.monster.group.visible) this.props.pusher('m', this.m.x, this.m.y, this.m.z, 0.75, 0.42);
+      this.props.update(dt, this.cam.position);
+    }
     this.updateGhost(dt);
     this.updateEffects(dt);
     this.targetT -= dt; if (this.targetT <= 0) { this.targetT = 0.07; this.updateTarget(); }
@@ -826,9 +863,16 @@ export class Game {
     this.hudT -= dt; if (this.hudT <= 0) { this.hudT = 0.1; this.updateHud(); }
     // shadows are re-rendered every second frame (the one-frame lag is invisible, the saving is not)
     if (this.Q.shadows) this.r.shadowMap.needsUpdate = (this.frame++ & 1) === 0;
-    this.r.render(this.scene, this.cam);
-    // first-person hands: second tiny pass on top, with depth cleared so they never clip into walls
-    if (this.vmActive) { this.r.autoClear = false; this.r.clearDepth(); this.r.render(this.vm.scene, this.vm.cam); this.r.autoClear = true; }
+    if (this.beam) this.beam.update(dt, this.flashOn && this.flash.intensity > 0.05 && this.vmActive, this.flash.intensity);
+    if (this.dust) this.dust.update(dt, this.cam, this.role !== 'monster' ? this.flash : null, this.flashOn && this.flash.intensity > 0.05 && this.role !== 'monster', this.r);
+    if (this.Q.post) {
+      if (!this.post) this.post = new Post(this.r, this.scene, this.cam, { scene: this.vm.scene, camera: this.vm.cam }, this.Q);
+      this.post.render(dt, this.time, this.vmActive, Math.min(1, this.hurtFlash || 0));
+    } else {
+      this.r.render(this.scene, this.cam);
+      // first-person hands: second tiny pass on top, with depth cleared so they never clip into walls
+      if (this.vmActive) { this.r.autoClear = false; this.r.clearDepth(); this.r.render(this.vm.scene, this.vm.cam); this.r.autoClear = true; }
+    }
   };
 
   /**
@@ -858,6 +902,7 @@ export class Game {
     this.res.scale = v;
     this.r.setPixelRatio(this.basePR * v);
     this.r.setSize(innerWidth, innerHeight, false);
+    if (this.post) this.post.setSize(innerWidth, innerHeight, this.r.getPixelRatio());
   }
 
   updateLocal(dt) {
@@ -865,20 +910,20 @@ export class Game {
     const controllable = (me.state === 'alive' || me.state === 'downed') && me.hidden < 0 && !this.ended;
     const downed = me.state === 'downed';
     let fwd = 0, strafe = 0;
-    if (controllable && !this.chatOpen && !this.ui.blocked()) { fwd = (K.KeyW || K.ArrowUp ? 1 : 0) - (K.KeyS || K.ArrowDown ? 1 : 0); strafe = (K.KeyD || K.ArrowRight ? 1 : 0) - (K.KeyA || K.ArrowLeft ? 1 : 0); }
+    if (controllable && !this.chatOpen && !this.ui.blocked()) { fwd = (keyHeld(K, 'forward') ? 1 : 0) - (keyHeld(K, 'back') ? 1 : 0); strafe = (keyHeld(K, 'right') ? 1 : 0) - (keyHeld(K, 'left') ? 1 : 0); }
     // the left stick: how far you push it is how fast you walk
     let mag = 1;
     if (controllable) { const [pf, ps] = this.padMove(); const pm = Math.hypot(pf, ps); if (pm > Math.hypot(fwd, strafe) * 0.5 && pm > 0) { fwd = pf; strafe = ps; mag = Math.min(1, pm); } }
     if (fwd < 0.3) this.padSprint = false;
     if (this.rootT > 0) { this.rootT -= dt; fwd = 0; strafe = 0; } // caught in one of his traps
     if (downed) this.padCrouch = false;
-    const wantCrouch = downed || this.padCrouch || (this.set.togglecrouch ? this.crouchLatch : K.ControlLeft || K.ControlRight || K.KeyC);
+    const wantCrouch = downed || this.padCrouch || (this.set.togglecrouch ? this.crouchLatch : keyHeld(K, 'crouch'));
     if (this.exhausted && !downed) { this.pantT = (this.pantT || 0) - dt; if (this.pantT <= 0) { this.pantT = 0.62; this.audio.pant(); } }
     const crouch = controllable && (wantCrouch || (ph.isCrouched() && ph.lowCeiling()));
     if (controllable) ph.setCrouch(!!crouch);
     const moving = fwd !== 0 || strafe !== 0;
     const padRun = input.connected && (input.held(BTN.LT) || this.padSprint) && me.hidden < 0;
-    const sprint = !crouch && !downed && (K.ShiftLeft || K.ShiftRight || padRun) && fwd > 0.35 && !this.exhausted && this.stamina > 0;
+    const sprint = !crouch && !downed && (keyHeld(K, 'sprint') || padRun) && fwd > 0.35 && !this.exhausted && this.stamina > 0;
     const tireless = this.mods.has('sportsday') || this.sodaT > 0;
     if (this.sodaT > 0) this.sodaT -= dt;
     const ath = this.cls === 'athlete';
@@ -895,7 +940,9 @@ export class Game {
     const wl = Math.hypot(wx, wz); if (wl > 0) { wx = (wx / wl) * speed * mag; wz = (wz / wl) * speed * mag; }
     const acc = Math.min(1, dt * 11);
     this.vx += (wx - this.vx) * acc; this.vz += (wz - this.vz) * acc;
-    if (controllable) { const n = Math.ceil(dt / 0.034); for (let i = 0; i < n; i++) ph.move(this.vx, this.vz, dt / n); }
+    const n = Math.ceil(dt / 0.034);
+    if (controllable) { for (let i = 0; i < n; i++) ph.move(this.vx, this.vz, dt / n); }
+    else if (this.props) { for (let i = 0; i < n; i++) ph.idle(dt / n); } // spectating: the clutter keeps settling
     const f = ph.getFeet();
     const real = Math.hypot(f.x - this.lastFeet.x, f.z - this.lastFeet.z) / dt;
     this.lastFeet = f; this.speed = real; this.crouching = !!crouch; this.sprinting = !!sprint && real > 3.2;
@@ -937,7 +984,7 @@ export class Game {
     const inLocker = me.hidden >= 0 && me.state === 'alive' && !this.ended;
     if (inLocker) {
       // hold SPACE to hold your breath while he checks your locker
-      if ((K.Space || (input.connected && (input.held(BTN.LT) || input.held(BTN.DOWN)))) && !this.gaspLock && this.breath > 0) {
+      if ((keyHeld(K, 'breath') || (input.connected && (input.held(BTN.LT) || input.held(BTN.DOWN)))) && !this.gaspLock && this.breath > 0) {
         this.holding = true; this.breath = Math.max(0, this.breath - dt / (BREATH_SECS * (this.cls === 'sneak' ? 1.5 : 1)));
         this.hbT2 -= dt; if (this.hbT2 <= 0) { this.hbT2 = 0.78 - (1 - this.breath) * 0.38; this.audio.heartbeat(0.5 + (1 - this.breath) * 0.7); }
         if (this.breath <= 0) { this.holding = false; this.gaspLock = true; this.audio.gasp(null); this.s.emit('g:gasp'); this.toast('You gasp for air.', 'bad'); this.shake = 0.5; }
@@ -1014,12 +1061,14 @@ export class Game {
     lit.sort((a, b) => a.d - b.d);
     this.spots.forEach((s, i) => {
       const o = lit[i];
-      if (!o) { s.intensity = 0; return; }
+      const b = s.userData.beam;
+      if (!o) { s.intensity = 0; if (b) b.update(dt, false); return; }
       const c = o.r.cur, ey = c.y + (c.f & 1 ? 0.75 : 1.35);
       const fx = -Math.sin(c.ry) * Math.cos(c.rx), fy = Math.sin(c.rx), fz = -Math.cos(c.ry) * Math.cos(c.rx);
       s.position.set(c.x + fx * 0.35, ey, c.z + fz * 0.35);
       s.target.position.set(c.x + fx * 6, ey + fy * 6, c.z + fz * 6);
       s.intensity = 20;
+      if (b) { b.aim(s.position, s.target.position); b.update(dt, true); }
     });
   }
 
@@ -1242,7 +1291,7 @@ export class Game {
     if (this.voice) {
       const v = this.voice, mic = $('mic');
       mic.hidden = !v.enabled;
-      if (v.enabled) { mic.textContent = v.muted ? '🎙 muted (M)' : v.ptt ? (v.pttDown ? '🎙 talking' : '🎙 hold V to talk') : v.speaking ? '🎙 talking' : '🎙 on (M mutes)'; mic.classList.toggle('hot', v.live && v.speaking); mic.classList.toggle('off', !v.live); }
+      if (v.enabled) { mic.textContent = v.muted ? `🎙 muted (${keyOf('mute')})` : v.ptt ? (v.pttDown ? '🎙 talking' : `🎙 hold ${keyOf('talk')} to talk`) : v.speaking ? '🎙 talking' : `🎙 on (${keyOf('mute')} mutes)`; mic.classList.toggle('hot', v.live && v.speaking); mic.classList.toggle('off', !v.live); }
       const sp = v.enabled ? [...v.speakers(this.id)].sort().join(',') : '';
       if (sp !== this._sp) { this._sp = sp; this.renderTeam(); }
     }
@@ -1258,6 +1307,7 @@ export class Game {
     const st = $('bar-stamina'), bt = $('bar-battery');
     const ts = $('torch-state'), lit = this.flashOn && this.battery > 0;
     ts.textContent = lit ? 'ON' : this.battery <= 0 ? 'DEAD' : 'OFF'; ts.classList.toggle('off', !lit);
+    const tk = glyph('torch'); if (tk !== this._torchKey) { this._torchKey = tk; bt.querySelector('kbd, .pb') && bt.querySelector('kbd, .pb').remove(); bt.querySelector('span').insertAdjacentHTML('beforeend', ' ' + tk); }
     st.querySelector('i').style.width = `${this.stamina}%`; st.classList.toggle('low', this.exhausted);
     bt.querySelector('i').style.width = `${this.battery}%`; bt.classList.toggle('low', this.battery < 14);
     const h = $('health'), falls = me.downs || 0;
@@ -1295,12 +1345,15 @@ export class Game {
 
   resize() {
     this.r.setSize(innerWidth, innerHeight, false);
+    if (this.post) this.post.setSize(innerWidth, innerHeight, this.r.getPixelRatio());
     this.cam.aspect = innerWidth / innerHeight; this.cam.updateProjectionMatrix();
     if (this.vm) this.vm.resize();
   }
   applySettings() {
     this.cam.fov = this.set.fov; this.cam.updateProjectionMatrix();
     this.r.toneMappingExposure = this.set.bright;
+    const pr = Math.min(window.devicePixelRatio || 1, this.Q.maxDpr) * this.Q.scale * (this.set.res || 1);
+    if (Math.abs(pr - this.basePR) > 1e-3) { this.basePR = pr; this.setResScale(this.res.scale); }
   }
   /** Match is over: keep rendering as a backdrop but stop playing. */
   end() {
@@ -1310,6 +1363,7 @@ export class Game {
     this.audio.stopAmbience();
   }
   dispose() {
+    if (this.props) this.props.dispose();
     cancelAnimationFrame(this.raf);
     if (this.unsubInput) this.unsubInput();
     for (const [el, ev, fn, opt] of this.listeners) el.removeEventListener(ev, fn, opt);
@@ -1323,6 +1377,8 @@ export class Game {
     });
     for (const k in this.T) this.T[k].dispose();
     this.vm.dispose(); this.r.shadowMap.autoUpdate = true;
+    if (this.post) this.post.dispose();
+    if (this.envRT) { this.envRT.dispose(); this.scene.environment = null; }
     this.r.renderLists.dispose();
     try { this.ph.world.free(); } catch { /* already freed */ }
     $('hud').hidden = true; $('netwarn').hidden = true; $('fx-locker').classList.remove('on'); $('fx-static').style.display = 'none'; $('fx-hurt').style.display = 'none'; $('fps').hidden = true; $('toasts').innerHTML = ''; $('chatlog').innerHTML = ''; $('status').innerHTML = ''; $('notebook').hidden = true; $('hud').classList.remove('monster'); $('mhud').hidden = true; $('mic').hidden = true; this.amb.color.setHex(0x7486a8); $('hud').classList.remove('scare'); $('fx-flash').style.opacity = 0; $('objnow').textContent = ''; $('itemhint').textContent = '';

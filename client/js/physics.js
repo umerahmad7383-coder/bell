@@ -122,7 +122,7 @@ export function buildPhysics(RAPIER) {
       body.setTranslation({ x, y: y + st.half + PLAYER_R + 0.02, z }, true);
       body.setNextKinematicTranslation({ x, y: y + st.half + PLAYER_R + 0.02, z });
       st.vy = 0;
-      world.step();
+      world.step(api.events || undefined);
     },
     setCrouch(on) {
       const half = on ? CROUCH_HALF : STAND_HALF;
@@ -133,6 +133,8 @@ export function buildPhysics(RAPIER) {
       body.setTranslation({ x: feet.x, y: feet.y + half + PLAYER_R, z: feet.z }, true);
     },
     isCrouched() { return st.half === CROUCH_HALF; },
+    /** advance the simulation without moving you (spectating, menus, cut-scenes): props keep falling and rolling */
+    idle(dt) { world.timestep = dt; world.step(api.events || undefined); },
     /** Is there a table directly overhead (can't stand up)? */
     lowCeiling() {
       const f = api.getFeet();
@@ -146,13 +148,14 @@ export function buildPhysics(RAPIER) {
     move(vx, vz, dt) {
       world.timestep = dt;
       st.vy = st.grounded ? -2 : Math.max(-20, st.vy - 22 * dt);
-      cc.computeColliderMovement(collider, { x: vx * dt, y: st.vy * dt, z: vz * dt });
+      // loose props and other people's bodies never block you (you shove the props instead): only fixed geometry counts
+      cc.computeColliderMovement(collider, { x: vx * dt, y: st.vy * dt, z: vz * dt }, RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC);
       const m = cc.computedMovement();
       st.grounded = cc.computedGrounded();
       const t = body.translation();
       const nx = t.x + m.x, ny = t.y + m.y, nz = t.z + m.z;
       body.setNextKinematicTranslation({ x: nx, y: ny, z: nz });
-      world.step();
+      world.step(api.events || undefined);
       // safety net: never fall out of the world
       const fy = floorY(nx, nz);
       if (ny - st.half - PLAYER_R < fy - 1.5) api.teleport(nx, fy, nz);

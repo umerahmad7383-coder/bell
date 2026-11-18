@@ -3,10 +3,12 @@ import * as THREE from 'three';
 import RAPIER from '../vendor/rapier.es.js';
 import { io } from '../vendor/socket.io.esm.min.js';
 import { Game } from './game.js';
+import { loadLightmaps } from './lightmap.js';
 import { AudioSys } from './audio.js';
 import { Voice } from './voice.js';
 import { MenuScene } from './menubg.js';
-import { input, padGlyph, padName, BTN } from './input.js';
+import { input, padGlyph, padName, BTN, fill as fillKeys, glyph } from './input.js';
+import { binds, keyName, keyOf, rebind, resetBinds, RESERVED } from './keys.js';
 import { startPadNav } from './padnav.js';
 import { renderPadDiagram, padTables, livePadDiagram } from './paddiagram.js';
 import { VERSION } from './version.js';
@@ -19,22 +21,65 @@ const setLabel = (btn, text) => { const l = btn.querySelector('.lbl'); if (l) l.
 const labelOf = (btn) => { const l = btn.querySelector('.lbl'); return (l || btn).textContent; };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const qs = new URLSearchParams(location.search);
-const SERVER = (qs.get('server') || window.LAST_BELL_SERVER || '').replace(/\/$/, '') || location.origin;
+// the Windows app (desktop/) exposes window.lastBell: its server address, display controls, updates and Quit
+const desk = window.lastBell && window.lastBell.desktop ? window.lastBell : null;
+const SERVER = (qs.get('server') || (desk && desk.server) || window.LAST_BELL_SERVER || '').replace(/\/$/, '') || location.origin;
+document.documentElement.classList.toggle('desktop', !!desk);
 
 function fatal(msg) { const f = $('fatal'); f.hidden = false; f.textContent = msg; }
 window.addEventListener('error', (e) => console.error('[last-bell]', e.message, e.filename, e.lineno));
 
 // ---------------------------------------------------------------- settings
+let game = null, lobby = null, myId = null, rapierReady = null, starting = false;
 const store = { get(k, d) { try { const v = localStorage.getItem('lastbell.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('lastbell.' + k, JSON.stringify(v)); } catch { /* private mode */ } } };
-const settings = { sens: 1, vol: 0.8, fov: 75, bright: 1, quality: 'medium', dynres: true, showfps: false, togglecrouch: false, tips: true, jumpscares: true, ptt: false, padsens: 1, padinvert: false, vibrate: true, ...store.get('settings', {}) };
+const settings = { sens: 1, vol: 0.8, fov: 75, bright: 1, quality: desk ? 'high' : 'medium', res: 1, dynres: true, showfps: false, togglecrouch: false, tips: true, jumpscares: true, ptt: false, padsens: 1, padinvert: false, vibrate: true, ...store.get('settings', {}) };
 input.vibrate = settings.vibrate;
 const audio = new AudioSys(); audio.volume = settings.vol;
-for (const [id, key, num] of [['set-sens', 'sens', 1], ['set-vol', 'vol', 1], ['set-fov', 'fov', 1], ['set-bright', 'bright', 1], ['set-padsens', 'padsens', 1], ['set-quality', 'quality', 0]]) {
+const QUALITY_NOTE = {
+  low: 'No shadows and few lights. For old laptops and weak graphics chips.',
+  medium: 'Shadows, detailed surfaces, glowing lights and a visible torch beam in the dust.',
+  high: 'Sharper shadows, more lights, reflections and smoother edges. For most gaming PCs.',
+  ultra: 'Everything: the sharpest shadows and textures, ambient occlusion in corners, full resolution. Needs a strong graphics card.',
+};
+const qualityNote = () => { $('quality-note').textContent = QUALITY_NOTE[settings.quality] + (game ? ' Applies from the next match.' : ''); };
+for (const [id, key, num] of [['set-sens', 'sens', 1], ['set-vol', 'vol', 1], ['set-fov', 'fov', 1], ['set-bright', 'bright', 1], ['set-padsens', 'padsens', 1], ['set-quality', 'quality', 0], ['set-res', 'res', 1]]) {
   const el = $(id); el.value = settings[key];
-  const fill = () => { if (el.type === 'range') el.style.setProperty('--p', `${((el.value - el.min) / (el.max - el.min)) * 100}%`); };
+  const fill = () => { if (el.type === 'range') el.style.setProperty('--p', `${((el.value - el.min) / (el.max - el.min)) * 100}%`); if (id === 'set-res') $('out-res').textContent = `${Math.round(el.value * 100)}%`; };
   fill();
-  el.addEventListener('input', () => { fill(); settings[key] = num ? Number(el.value) : el.value; store.set('settings', settings); audio.setVolume(settings.vol); if (game) game.applySettings(); });
+  el.addEventListener('input', () => { fill(); settings[key] = num ? Number(el.value) : el.value; store.set('settings', settings); audio.setVolume(settings.vol); if (key === 'quality') qualityNote(); if (game) game.applySettings(); });
 }
+if (!QUALITY_NOTE[settings.quality]) settings.quality = 'medium';
+qualityNote();
+// settings tabs
+let setTab = 'display';
+function renderSetTabs() {
+  document.querySelectorAll('#s-settings .tab').forEach((t) => { const on = t.dataset.stab === setTab; t.classList.toggle('on', on); t.setAttribute('aria-selected', on); });
+  document.querySelectorAll('#s-settings .stab').forEach((c) => (c.hidden = c.dataset.stab !== setTab));
+  qualityNote();
+}
+document.querySelectorAll('#s-settings .tab').forEach((t) => t.addEventListener('click', () => { setTab = t.dataset.stab; renderSetTabs(); }));
+const SET_TABS = ['display', 'sound', 'controls', 'game'];
+// the Windows app: window mode and size, Quit, and no browser fullscreen button
+if (desk) {
+  $('row-display').hidden = false; $('btn-fullscreen').hidden = true; $('btn-exit').hidden = false; $('btn-pause-exit').hidden = false;
+  const winRow = () => { $('row-winsize').hidden = $('set-display').value !== 'windowed'; };
+  const showDisplay = (d) => { if (d) { $('set-display').value = d.mode; $('set-winsize').value = d.size; } winRow(); };
+  Promise.resolve(desk.getDisplay()).then(showDisplay).catch(() => {});
+  if (desk.onDisplay) desk.onDisplay(showDisplay); // F11 / Alt+Enter
+  // updates: the app downloads new versions by itself; once one is ready, offer a restart
+  const upd = (u) => {
+    if (!u || u.state === 'none' || u.state === 'error') { $('update').hidden = true; return; }
+    $('update').hidden = false;
+    $('update').querySelector('span').textContent = u.state === 'ready' ? `Version ${u.version} is ready. It installs when you restart the game.` : `Downloading version ${u.version}… ${u.percent || 0}%`;
+    $('btn-update').hidden = u.state !== 'ready';
+    setLabel($('btn-update'), 'Restart now');
+  };
+  if (desk.onUpdate) { desk.onUpdate(upd); Promise.resolve(desk.getUpdate()).then(upd).catch(() => {}); }
+  const push = () => { winRow(); desk.setDisplay({ mode: $('set-display').value, size: $('set-winsize').value }); };
+  $('set-display').addEventListener('change', push); $('set-winsize').addEventListener('change', push);
+  const quit = () => { try { socket.emit('lobby:leave'); } catch { /* offline */ } seat.set(null); setTimeout(() => desk.quit(), 120); };
+  $('btn-exit').onclick = quit; $('btn-pause-exit').onclick = quit;
+} else if (!/^(localhost|127\.)/.test(location.hostname) || qs.get('dl')) $('dl-win').hidden = false;
 
 for (const [id, key] of [['set-dynres', 'dynres'], ['set-showfps', 'showfps'], ['set-togglecrouch', 'togglecrouch'], ['set-tips', 'tips'], ['set-jumpscares', 'jumpscares'], ['set-ptt', 'ptt'], ['set-padinvert', 'padinvert'], ['set-vibrate', 'vibrate']]) {
   const el = $(id); el.checked = !!settings[key];
@@ -101,7 +146,61 @@ function renderControls() {
   document.querySelectorAll('#s-controls .seg button').forEach((b) => { const on = b.dataset.kind === (kind === 'xbox' ? 'xbox' : 'ps'); b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   $('pad-conn').innerHTML = input.connected ? `<span class="live"></span>Connected: ${esc(padName(input.id))}. Press any button to see it light up.` : 'No controller connected. Plug one in or pair it, then press any button.';
   if (ctlTab === 'pad') { renderPadDiagram($('pad-diagram'), kind); const t = padTables(kind); $('pad-hunter').innerHTML = t.hunter; $('pad-menus').innerHTML = t.menus; }
+  else renderBinds();
 }
+// ---- keyboard: every key can be changed (keys.js); mouse buttons and 1–4 stay as they are
+const BIND_NAMES = { forward: 'Move forward', back: 'Move back', left: 'Move left', right: 'Move right', sprint: 'Sprint', crouch: 'Crouch', interact: 'Interact', torch: 'Torch', drop: 'Drop / toss', breath: 'Hold breath', ping: 'Ping', notebook: 'Notebook', chat: 'Text chat', mute: 'Mute microphone', talk: 'Push to talk', teleport: 'Teleport', trap: 'Set a trap' };
+const KB_COLS = [[
+  [['forward', 'left', 'back', 'right'], 'Move (forward, left, back, right). The arrow keys work too, and walking backwards is slower'],
+  [['sprint'], 'Sprint. Uses stamina, and he hears it'],
+  [['crouch'], 'Crouch: quiet, harder to see, fits under tables and beds. Ctrl works too'],
+  [['interact'], 'Doors, items, lockers, the piano, revive'],
+  [['torch'], 'Torch on or off. Right click works too'],
+  ['Left click', 'Use what you are holding: throw, flash the camera, drink, wind the alarm, draw with chalk'],
+  ['1–4 or wheel', 'Choose an inventory slot'],
+], [
+  [['drop'], 'Tap to drop what you hold. Hold, then let go, to toss it to a teammate'],
+  [['breath'], 'In a locker: hold your breath while he checks it'],
+  [['ping'], 'Ping what you look at (middle click too). When you are down, call for help'],
+  [['notebook'], 'Notebook: objectives and notes'],
+  [['mute'], 'Mute your microphone'],
+  [['talk'], 'Push to talk, when it is turned on in Settings'],
+  [['chat'], 'Text chat'],
+  ['Esc', 'Pause and release the mouse'],
+]];
+const KB_HUNTER = [[
+  ['Left click', 'Attack'],
+  [['sprint'], 'Hold to rage: fast, but it runs out (the sprint key)'],
+  [['teleport'], 'Teleport forward'],
+], [
+  [['trap'], 'Set a trap'],
+  [['ping'], 'Kill the lights (the ping key)'],
+  [['interact'], 'Force doors and rip open lockers (the interact key)'],
+]];
+let listening = null, lastChanged = null;
+const kbRow = ([k, text]) => Array.isArray(k)
+  ? `<tr><td>${k.map((a) => `<button class="kb${a === lastChanged ? ' changed' : ''}" data-bind="${a}" title="${BIND_NAMES[a]}" aria-label="${BIND_NAMES[a]}: ${esc(keyName(binds[a]))}. Click to change">${esc(keyName(binds[a]))}</button>`).join('')}</td><td>${text}</td></tr>`
+  : `<tr><td class="fixed"><kbd>${k}</kbd></td><td>${text}</td></tr>`;
+function renderBinds() {
+  $('kb-binds').innerHTML = KB_COLS.map((col) => `<table class="keys">${col.map(kbRow).join('')}</table>`).join('');
+  $('kb-hunter').innerHTML = KB_HUNTER.map((col) => `<table class="keys">${col.map(kbRow).join('')}</table>`).join('');
+  if (listening) { const b = document.querySelector(`#s-controls button.kb[data-bind="${listening}"]`); if (b) { b.classList.add('listen'); b.textContent = 'Press a key'; } }
+}
+function listen(action) { listening = action; renderBinds(); const b = document.querySelector(`#s-controls button.kb[data-bind="${action}"]`); if (b) b.focus(); $('kb-note').textContent = `Press the new key for ${BIND_NAMES[action].toLowerCase()}. Esc cancels.`; }
+for (const id of ['kb-binds', 'kb-hunter']) $(id).addEventListener('click', (e) => { const b = e.target.closest('button[data-bind]'); if (b) { e.stopPropagation(); listen(b.dataset.bind); } });
+window.addEventListener('keydown', (e) => {
+  if (!listening) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const action = listening; listening = null;
+  if (e.code === 'Escape') { $('kb-note').textContent = ''; renderBinds(); return; }
+  if (RESERVED.has(e.code)) { $('kb-note').textContent = `${keyName(e.code)} is kept for the game (Esc pauses, 1 to 4 pick inventory slots). Choose another key.`; renderBinds(); return; }
+  const other = rebind(action, e.code); lastChanged = action;
+  $('kb-note').textContent = other ? `${BIND_NAMES[action]} is now ${keyName(e.code)}. ${BIND_NAMES[other]} had that key, so it moved to ${keyName(binds[other])}.` : `${BIND_NAMES[action]} is now ${keyName(e.code)}.`;
+  renderBinds(); audio.ui();
+}, true);
+document.addEventListener('pointerdown', (e) => { if (listening && !e.target.closest('button.kb')) { listening = null; $('kb-note').textContent = ''; renderBinds(); } });
+$('btn-keys-reset').onclick = () => { resetBinds(); listening = null; lastChanged = null; $('kb-note').textContent = 'Every key is back to the default.'; renderBinds(); };
+$('btn-set-keys').onclick = () => { closeSub($('s-settings')); ctlTab = 'kbm'; ctlKind = null; renderControls(); openSub('s-controls'); };
 document.querySelectorAll('#s-controls .tab').forEach((t) => t.addEventListener('click', () => { ctlTab = t.dataset.tab; renderControls(); }));
 document.querySelectorAll('#s-controls .seg button').forEach((b) => b.addEventListener('click', () => { ctlKind = b.dataset.kind === 'ps' ? (input.connected && input.ps ? input.kind : 'ps5') : 'xbox'; renderControls(); }));
 // main menu: say when a controller is connected
@@ -135,13 +234,15 @@ startPadNav({
     if (c.id === 's-pause') $('btn-resume').click();
     else if (['s-settings', 's-controls'].includes(c.id) && game && !game.ended) closeSub(c);
   },
-  tab(c, d) { if (c.id === 's-controls') { ctlTab = ctlTab === 'kbm' ? 'pad' : 'kbm'; renderControls(); } },
+  tab(c, d) {
+    if (c.id === 's-controls') { ctlTab = ctlTab === 'kbm' ? 'pad' : 'kbm'; renderControls(); }
+    else if (c.id === 's-settings') { setTab = SET_TABS[(SET_TABS.indexOf(setTab) + d + SET_TABS.length) % SET_TABS.length]; renderSetTabs(); }
+  },
 });
 // the controller page lights up what you press
 (function liveTick() { requestAnimationFrame(liveTick); if (!$('s-controls').hidden && ctlTab === 'pad') livePadDiagram($('pad-diagram')); })();
 
 // ---------------------------------------------------------------- state
-let game = null, lobby = null, myId = null, rapierReady = null, starting = false;
 const nameInput = $('name');
 nameInput.value = store.get('name', '');
 nameInput.addEventListener('input', () => store.set('name', nameInput.value));
@@ -230,13 +331,14 @@ socket.on('connect', () => {
   });
 });
 // version on the menu, and a reload offer when the server has been updated since this page loaded
-$('version').textContent = `Version ${VERSION}`;
+$('version').textContent = desk ? `Version ${desk.version} · Windows app` : `Version ${VERSION}`;
 socket.on('hello', (h) => {
+  if (desk) return; // the app updates itself (see above)
   const newer = h && h.version && h.version !== VERSION;
   $('update').hidden = !newer;
   if (newer) $('update').querySelector('span').textContent = `Version ${h.version} of the game is out (you have ${VERSION}).`;
 });
-$('btn-update').onclick = () => { seat.set(null); location.reload(); };
+$('btn-update').onclick = () => { if (desk) { desk.installUpdate(); return; } seat.set(null); location.reload(); };
 socket.on('connect_error', () => setConn(`Cannot reach the game server (${SERVER.replace(/^https?:\/\//, '')}). Retrying…`, 'bad'));
 socket.on('disconnect', (reason) => {
   setConn('Connection lost. Reconnecting…', 'bad');
@@ -256,7 +358,7 @@ function voiceUi() {
   const b = $('btn-voice');
   setLabel(b, voice.enabled ? (voice.muted ? 'Voice muted (click to turn off)' : 'Voice on (click to turn off)') : 'Turn on voice chat');
   b.classList.toggle('on', voice.enabled);
-  $('voice-note').textContent = voice.enabled ? `Voice: connected to ${voice.connected()} of ${voice.peers.size} other player${voice.peers.size === 1 ? '' : 's'} with voice on. In the match it is proximity-based: people fade with distance and walls, and the Headmaster hears you too. ${settings.ptt ? 'Hold V to talk.' : 'M mutes your mic.'}` : '';
+  $('voice-note').textContent = voice.enabled ? `Voice: connected to ${voice.connected()} of ${voice.peers.size} other player${voice.peers.size === 1 ? '' : 's'} with voice on. In the match it is proximity-based: people fade with distance and walls, and the Headmaster hears you too. ${settings.ptt ? `Hold ${keyOf('talk')} to talk.` : `${keyOf('mute')} mutes your mic.`}` : '';
 }
 voice.onChange = voiceUi;
 $('btn-voice').onclick = async () => {
@@ -271,9 +373,9 @@ setInterval(() => { if (!game && voice.enabled) voice.frame(0.25, null, null); i
 $('btn-create').onclick = () => socket.emit('lobby:create', { name: myName(), look }, (r) => { if (r && r.ok) enterLobby(r); });
 $('btn-solo').onclick = () => socket.emit('lobby:create', { name: myName(), look }, (r) => { if (r && r.ok) { enterLobby(r); socket.emit('lobby:start', null, () => {}); } });
 $('btn-join').onclick = () => { $('join-error').textContent = ''; overlay('s-join'); $('code').focus(); };
-$('btn-settings').onclick = () => openSub('s-settings');
+$('btn-settings').onclick = () => { renderSetTabs(); openSub('s-settings'); };
 $('btn-controls').onclick = () => openControls();
-$('btn-pause-settings').onclick = () => openSub('s-settings');
+$('btn-pause-settings').onclick = () => { renderSetTabs(); openSub('s-settings'); };
 $('btn-pause-controls').onclick = () => openControls();
 $('btn-fullscreen').onclick = async () => {
   try {
@@ -296,9 +398,9 @@ if (qs.get('room')) { codeInput.value = qs.get('room').toUpperCase().replace(/[^
 // ---------------------------------------------------------------- lobby
 function enterLobby(r) { myId = r.you; if (r.token) seat.set({ code: r.code, token: r.token }); $('lobby-chatlog').innerHTML = ''; $('lobby-error').textContent = ''; sysLine('Share the room code or the invite link with your friends.'); if (lobby) renderLobby(lobby); show('s-lobby'); }
 function inviteLink() {
-  const u = new URL(location.href); u.search = ''; u.hash = '';
+  const u = new URL(desk ? SERVER + '/' : location.href); u.search = ''; u.hash = ''; // from the app, invite to the website: friends can play there or get the app
   u.searchParams.set('room', lobby.code);
-  if (qs.get('server')) u.searchParams.set('server', qs.get('server'));
+  if (qs.get('server') && !desk) u.searchParams.set('server', qs.get('server'));
   return u.toString();
 }
 async function copy(text, btn) {
@@ -389,29 +491,33 @@ function renderLobby(l) {
 }
 
 // ---------------------------------------------------------------- match lifecycle
+// the baked lighting (a few MB) downloads while you are in the menus
+const lightmapsReady = loadLightmaps();
 const TIPS = [
   'He hears you run. Walk when you can; crouch when he is close.',
-  'Your torch makes you easy to see. Turn it off (F) and hold still if he has not noticed you.',
+  'Your torch makes you easy to see. Turn it off ({torch}) and hold still if he has not noticed you.',
   'Lockers hide you — unless he watched you climb in.',
   'Throw a bottle (left click) to pull him away from where you need to go.',
   'The hand bell drives him off for a few seconds. It only works once.',
   'Close doors behind you. He has to stop to open them.',
-  'Drop items with G to hand them to a teammate.',
+  'Drop items with {drop} to hand them to a teammate.',
   'When the power comes back on, he comes to the basement. Do not be there.',
   'Someone watching the monitors in the Security Office can call out where he is.',
 ];
 socket.on('game:start', async (init) => {
   if (starting) return; starting = true;
   stopGame(); closeOverlays(); show('s-loading');
-  $('loading-tip').textContent = TIPS[(Math.random() * TIPS.length) | 0];
+  $('loading-tip').textContent = fillKeys(TIPS[(Math.random() * TIPS.length) | 0]);
   const step = async (pct, text) => { $('loading-bar').style.width = pct + '%'; $('loading-text').textContent = text; await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30))); };
   try {
     await step(15, 'Unlocking the front doors…');
     rapierReady ||= RAPIER.init();
     await rapierReady;
-    await step(45, 'Finding the light switches…');
+    await step(35, 'Finding the light switches…');
+    const lightmaps = await lightmapsReady;
+    await step(55, 'Waiting for the lights to warm up…');
     audio.init(); audio.resumeAmbience();
-    game = new Game({ renderer, socket, init, settings, audio, RAPIER, voice, ui: { onPause: () => { if (game && !game.ended) overlay('s-pause'); }, blocked: () => OVER.some((o) => !$(o).hidden) } });
+    game = new Game({ renderer, socket, init, settings, audio, RAPIER, voice, lightmaps, ui: { onPause: () => { if (game && !game.ended) overlay('s-pause'); }, blocked: () => OVER.some((o) => !$(o).hidden) } });
     await step(100, 'Something is already inside.');
     show(null);
   } catch (err) {

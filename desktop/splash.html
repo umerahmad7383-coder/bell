@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Last Bell</title>
+<style>
+  @font-face { font-family: 'Fell SC'; src: url(app://game/assets/fonts/fell-sc.woff2) format('woff2'); }
+  @font-face { font-family: 'Barlow C'; src: url(app://game/assets/fonts/barlow-c-500.woff2) format('woff2'); font-weight: 500; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1311; color: #e6e3d6; font-family: 'Barlow C', 'Arial Narrow', sans-serif; -webkit-user-select: none; user-select: none; -webkit-app-region: drag; }
+  body { display: grid; place-items: center; background: radial-gradient(120% 90% at 50% 38%, #1a2522 0%, #0d1311 62%, #070b0a 100%); }
+  .wrap { text-align: center; transform: translateY(-6px); }
+  svg { width: 54px; height: 54px; color: #c9a24a; transform-origin: 50% 12%; animation: swing 2.4s cubic-bezier(.45,.05,.35,1) infinite; filter: drop-shadow(0 0 18px rgba(201,162,74,.28)); }
+  h1 { font-family: 'Fell SC', Georgia, serif; font-weight: 400; font-size: 54px; line-height: 1; margin: 12px 0 6px; letter-spacing: .01em; }
+  p { margin: 0; font-family: 'Fell SC', Georgia, serif; color: #c9a24a; font-size: 19px; }
+  .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(230,227,214,.06); overflow: hidden; }
+  .bar i { position: absolute; top: 0; bottom: 0; width: 34%; background: linear-gradient(90deg, transparent, #e6c779, transparent); animation: run 1.6s ease-in-out infinite; }
+  #status { position: absolute; left: 18px; bottom: 14px; font-size: 13.5px; color: #8f9993; }
+  #ver { position: absolute; right: 18px; bottom: 14px; font-size: 13.5px; color: #5d6762; }
+  @keyframes swing { 0%, 100% { transform: rotate(-9deg); } 50% { transform: rotate(9deg); } }
+  @keyframes run { from { left: -34%; } to { left: 100%; } }
+  @media (prefers-reduced-motion: reduce) { svg, .bar i { animation: none; } }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c-3.6 0-5.2 2.8-5.2 6.4v3.8L5 16.4h14l-1.8-3.2V9.4C17.2 5.8 15.6 3 12 3z" fill="currentColor"/><circle cx="12" cy="19" r="1.8" fill="currentColor"/></svg>
+    <h1>The Last Bell</h1>
+    <p>Class was never dismissed.</p>
+  </div>
+  <div id="status">Unlocking the front doors…</div>
+  <div id="ver"></div>
+  <div class="bar"><i></i></div>
+  <script>
+    window.setStatus = (t) => { document.getElementById('status').textContent = t; };
+    const v = new URLSearchParams(location.search).get('v'); if (v) document.getElementById('ver').textContent = 'Version ' + v;
+  </script>
+</body>
+</html>

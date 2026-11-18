@@ -377,6 +377,21 @@ export class AudioSys {
     this.noise({ dur: heavy ? 0.22 : 0.09, freq: heavy ? 260 : R(380, 620), gain: (heavy ? 0.9 : 0.16) * vol, pos, wet: heavy ? 0.7 : 0.3 });
     this.tone({ freq: heavy ? 52 : 85, to: 35, dur: heavy ? 0.22 : 0.07, gain: (heavy ? 0.8 : 0.12) * vol, pos, wet: 0.2 });
   }
+  /** a loose prop hitting something: what it is made of decides the sound, k = how hard (0..1.4) */
+  impact(pos, kind, k = 1) {
+    const g = Math.min(1.2, 0.25 + k * 0.6);
+    switch (kind) {
+      case 'metal': this.noise({ dur: 0.07, type: 'bandpass', freq: R(1400, 2400), q: 3, gain: g, pos, wet: 0.6 }); for (const f of [420, 690, 1130]) this.tone({ freq: f * R(0.93, 1.07), dur: R(0.25, 0.6) * (0.5 + k * 0.4), gain: 0.07 * g, pos, wet: 0.8 }); break;
+      case 'tin': this.noise({ dur: 0.04, type: 'highpass', freq: 3200, gain: 0.5 * g, pos, wet: 0.4 }); this.tone({ freq: R(1900, 2600), dur: 0.12, gain: 0.05 * g, pos, wet: 0.5 }); break;
+      case 'plastic': this.noise({ dur: 0.06, type: 'bandpass', freq: R(700, 1100), q: 2, gain: 0.8 * g, pos, wet: 0.4 }); this.tone({ freq: R(220, 300), to: 140, dur: 0.07, gain: 0.18 * g, pos, wet: 0.3 }); break;
+      case 'wood': this.noise({ dur: 0.06, type: 'bandpass', freq: R(500, 800), q: 2.5, gain: 0.9 * g, pos, wet: 0.5 }); this.tone({ freq: R(160, 230), to: 110, dur: 0.09, gain: 0.3 * g, pos, wet: 0.4 }); break;
+      case 'card': this.noise({ dur: 0.09, freq: 420, gain: 0.55 * g, pos, wet: 0.3, brown: true }); break;
+      case 'book': this.noise({ dur: 0.05, type: 'bandpass', freq: 900, q: 1, gain: 0.6 * g, pos, wet: 0.3 }); break;
+      case 'ball': this.tone({ freq: R(110, 140), to: 70, dur: 0.11, gain: 0.45 * g, pos, wet: 0.7 }); this.noise({ dur: 0.03, freq: 1200, gain: 0.3 * g, pos, wet: 0.6 }); break;
+      case 'paper': this.noise({ dur: 0.05, type: 'highpass', freq: 2500, gain: 0.12 * g, pos, wet: 0.2 }); break;
+      default: this.thud(pos, k < 0.6);
+    }
+  }
   click() { this.noise({ dur: 0.03, type: 'highpass', freq: 2500, gain: 0.25, wet: 0 }); }
   ui() { this.tone({ freq: 520, dur: 0.05, gain: 0.08, wet: 0 }); }
   pickup() { this.tone({ freq: 740, dur: 0.07, gain: 0.14, wet: 0 }); this.tone({ freq: 1110, dur: 0.1, gain: 0.12, when: 0.06, wet: 0 }); }

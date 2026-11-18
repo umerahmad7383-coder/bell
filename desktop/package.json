@@ -1,0 +1,54 @@
+{
+  "name": "the-last-bell-desktop",
+  "productName": "The Last Bell",
+  "version": "2.0.0",
+  "description": "The Last Bell: online co-op horror. The Windows app.",
+  "author": "umerahmad7383-coder",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "local": "electron . --dev --server=http://localhost:3000",
+    "dist": "electron-builder --win --x64 --publish never",
+    "release": "electron-builder --win --x64 --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
+  "devDependencies": {
+    "electron": "^45.3.4",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "io.github.umerahmad7383coder.thelastbell",
+    "productName": "The Last Bell",
+    "copyright": "© The Last Bell",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["main.js", "preload.js", "splash.html", "package.json", "build/icon.png"],
+    "extraResources": [{ "from": "../client", "to": "client", "filter": ["**/*"] }],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico",
+      "artifactName": "The-Last-Bell-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "The Last Bell",
+      "uninstallDisplayName": "The Last Bell",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [{ "provider": "github", "owner": "umerahmad7383-coder", "repo": "bell", "releaseType": "release" }]
+  }
+}

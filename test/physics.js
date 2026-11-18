@@ -74,4 +74,37 @@ ph.setCrouch(true);
 f = walk(0, 1.5, 1.4);
 assert(f.z > 51.3 && ph.lowCeiling(), `crouching, you crawl under it (z=${f.z.toFixed(2)})`);
 ph.setCrouch(false);
+
+// ---- loose props (client/js/props.js): real bodies you shove aside, never walls you get stuck on
+{
+  const THREE = await import('three');
+  const { Props } = await import('../client/js/props.js');
+  const ph2 = buildPhysics(RAPIER);
+  const props = new Props(new THREE.Scene(), ph2, RAPIER, { shadows: false, gloss: false }, null);
+  ph2.events = props.events;
+  assert(props.list.length > 40, `the school is cluttered: ${props.list.length} loose props`);
+  // everything settles onto a floor (nothing sinks through or flies away)
+  for (let i = 0; i < 240; i++) ph2.idle(1 / 60);
+  props.update(1 / 60, null);
+  const lost = props.list.filter((it) => { const t = it.body.translation(); return t.y < -3.6 || t.y > 3.4; });
+  assert(lost.length === 0, `after 4 s every prop rests inside the building (${lost.length} out of place)`);
+  // put a bin right in front of the player and walk through it
+  const bin = props.list.find((it) => it.kind === 'bin') || props.list[0];
+  ph2.teleport(20.5, 0, 22.5);
+  bin.body.setTranslation({ x: 21.3, y: 0.26, z: 22.5 }, true); bin.body.setLinvel({ x: 0, y: 0, z: 0 }, true); bin.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+  for (let i = 0; i < 60; i++) ph2.move(3.2, 0, 1 / 60);
+  const pf = ph2.getFeet(), bt = bin.body.translation();
+  assert(pf.x > 22.9, `walking into a bin does not stop you (x=${pf.x.toFixed(2)})`);
+  assert(Math.hypot(bt.x - 21.3, bt.z - 22.5) > 0.4, `the bin gets shoved (moved ${Math.hypot(bt.x - 21.3, bt.z - 22.5).toFixed(2)} m)`);
+  // someone else's body (here: the Headmaster) also knocks things over
+  const can = props.list.find((it) => it.kind === 'can') || props.list[1];
+  can.body.setTranslation({ x: 30.5, y: 0.07, z: 22.5 }, true); can.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  for (let i = 0; i < 40; i++) { props.pusher('m', 29.2 + i * 0.05, 0, 22.5, 0.75, 0.42); props.update(1 / 60, null); ph2.idle(1 / 60); }
+  const ct = can.body.translation();
+  assert(Math.hypot(ct.x - 30.5, ct.z - 22.5) > 0.2, `the Headmaster's body sends a can flying (moved ${Math.hypot(ct.x - 30.5, ct.z - 22.5).toFixed(2)} m)`);
+  // and a pusher never blocks the player
+  props.pusher('friend', 25.5, 0, 22.5); ph2.teleport(24.5, 0, 22.5);
+  for (let i = 0; i < 40; i++) { props.pusher('friend', 25.5, 0, 22.5); ph2.move(3, 0, 1 / 60); }
+  assert(ph2.getFeet().x > 26.2, 'other players never block you (as before)');
+}
 console.log(process.exitCode ? '\nSOME PHYSICS TESTS FAILED' : '\nALL PHYSICS TESTS PASSED');

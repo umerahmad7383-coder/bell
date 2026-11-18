@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download The Last Bell for Windows</title>
+<meta name="description" content="The Last Bell for Windows: online co-op horror for 2 to 8 friends. Free. Fullscreen, controller-ready, and it updates itself.">
+<meta property="og:title" content="Download The Last Bell for Windows">
+<meta property="og:description" content="Online co-op horror for 2 to 8 friends. Free, and it updates itself.">
+<meta property="og:image" content="/assets/share.jpg">
+<meta name="theme-color" content="#0f1614">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3c-3.6 0-5.2 2.8-5.2 6.4v3.8L5 16.4h14l-1.8-3.2V9.4C17.2 5.8 15.6 3 12 3z' fill='%23c9a24a'/%3E%3Ccircle cx='12' cy='19' r='1.8' fill='%23c9a24a'/%3E%3C/svg%3E">
+<style>
+  @font-face { font-family: 'Fell SC'; src: url(assets/fonts/fell-sc.woff2) format('woff2'); font-display: swap; }
+  @font-face { font-family: 'Barlow C'; src: url(assets/fonts/barlow-c-500.woff2) format('woff2'); font-weight: 500; font-display: swap; }
+  @font-face { font-family: 'Barlow C'; src: url(assets/fonts/barlow-c-600.woff2) format('woff2'); font-weight: 600; font-display: swap; }
+  @font-face { font-family: 'Barlow C'; src: url(assets/fonts/barlow-c-700.woff2) format('woff2'); font-weight: 700; font-display: swap; }
+  :root {
+    --night: #070b0a; --slate: #0f1614; --slate-2: #16201d; --line: rgba(230, 227, 214, 0.1);
+    --chalk: #e6e3d6; --fog: #95a099; --brass: #c9a24a; --brass-hi: #e6c779; --blood: #a8261d;
+    --display: 'Fell SC', 'Palatino Linotype', Palatino, Georgia, serif;
+    --ui: 'Barlow C', 'Arial Narrow', 'Roboto Condensed', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--night); }
+  body { margin: 0; min-height: 100vh; color: var(--chalk); font: 500 18px/1.5 var(--ui);
+    background: radial-gradient(90% 70% at 78% 18%, #1b2724 0%, transparent 60%), radial-gradient(60% 60% at 0% 100%, #121a17 0%, transparent 70%), var(--night); }
+  a { color: var(--brass-hi); text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--brass-hi); outline-offset: 3px; border-radius: 6px; }
+  .page { max-width: 1180px; margin: 0 auto; padding: clamp(28px, 6vh, 64px) clamp(20px, 5vw, 56px) 48px; }
+
+  /* the hero: the title and the button on the left, the school itself on the right */
+  .hero { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: clamp(28px, 5vw, 64px); align-items: center; }
+  .mark { width: 46px; height: 46px; color: var(--brass); transform-origin: 50% 10%; animation: toll 3.2s cubic-bezier(.45, .05, .35, 1) 0.4s 2 both; }
+  h1 { font: 400 clamp(54px, 7.4vw, 104px)/0.88 var(--display); margin: 14px 0 0; letter-spacing: 0.005em; }
+  .lede { font: 400 clamp(20px, 2.1vw, 25px)/1.3 var(--display); color: var(--brass); margin: 18px 0 0; max-width: 30ch; }
+  .pitch { color: var(--fog); max-width: 46ch; margin: 18px 0 0; }
+  .get { margin-top: 30px; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+  .dl { display: inline-flex; align-items: center; gap: 16px; padding: 16px 26px 16px 20px; border-radius: 14px; text-decoration: none; color: #16110a;
+    background: linear-gradient(180deg, var(--brass-hi), var(--brass)); box-shadow: 0 10px 30px rgba(201, 162, 74, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.35); transition: transform .18s ease, box-shadow .18s ease; }
+  .dl:hover { transform: translateY(-2px); box-shadow: 0 14px 36px rgba(201, 162, 74, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+  .dl svg { width: 30px; height: 30px; flex: none; }
+  .dl b { display: block; font: 700 22px/1.1 var(--ui); }
+  .dl small { display: block; font: 600 14.5px/1.3 var(--ui); opacity: 0.72; margin-top: 2px; }
+  .alt { font-size: 16px; color: var(--fog); }
+
+  .shot { position: relative; margin: 0; border-radius: 16px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--line); background: var(--slate); aspect-ratio: 16 / 9; }
+  .shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .shot figcaption { position: absolute; left: 16px; bottom: 12px; font-size: 14px; color: rgba(230, 227, 214, 0.75); text-shadow: 0 1px 6px #000; }
+
+  /* the rest reads like the school's notice board: plain sections, ruled off */
+  .board { display: grid; grid-template-columns: 1.25fr 1fr; gap: clamp(28px, 5vw, 64px); margin-top: clamp(48px, 9vh, 96px); padding-top: 34px; border-top: 1px solid var(--line); }
+  h2 { font: 400 30px/1.1 var(--display); margin: 0 0 16px; }
+  ol { list-style: none; counter-reset: s; padding: 0; margin: 0; display: grid; gap: 16px; }
+  ol li { counter-increment: s; display: grid; grid-template-columns: 34px 1fr; gap: 12px; }
+  ol li::before { content: counter(s); width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font: 700 15px var(--ui); color: var(--brass-hi); box-shadow: inset 0 0 0 1.5px rgba(201, 162, 74, 0.55); }
+  ol b { color: var(--chalk); font-weight: 600; }
+  ol span { color: var(--fog); }
+  kbd { font: 600 14px var(--ui); padding: 1px 7px; border-radius: 6px; background: var(--slate-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--chalk); }
+  .smart { margin-top: 10px; padding: 12px 14px; border-radius: 10px; background: rgba(201, 162, 74, 0.07); box-shadow: inset 0 0 0 1px rgba(201, 162, 74, 0.25); font-size: 16px; color: #cfc9b4; }
+  dl.req { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 10px 18px; }
+  dl.req dt { color: var(--fog); }
+  dl.req dd { margin: 0; }
+  .notes { margin-top: 26px; color: var(--fog); font-size: 16px; }
+  footer { margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px 22px; color: var(--fog); font-size: 15px; }
+  footer a { color: var(--fog); }
+
+  @keyframes toll { 0% { transform: rotate(0); } 18% { transform: rotate(14deg); } 42% { transform: rotate(-11deg); } 64% { transform: rotate(7deg); } 84% { transform: rotate(-3deg); } 100% { transform: rotate(0); } }
+  @media (max-width: 880px) { .hero, .board { grid-template-columns: 1fr; } .shot { order: -1; } }
+  @media (prefers-reduced-motion: reduce) { .mark { animation: none; } .dl { transition: none; } }
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="hero">
+    <div>
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c-3.6 0-5.2 2.8-5.2 6.4v3.8L5 16.4h14l-1.8-3.2V9.4C17.2 5.8 15.6 3 12 3z" fill="currentColor"/><circle cx="12" cy="19" r="1.8" fill="currentColor"/></svg>
+      <h1>The Last Bell</h1>
+      <p class="lede">Class was never dismissed.</p>
+      <p class="pitch">Online co-op horror for 2 to 8 friends. Find the fuses, get the keys, reach the gate before the Headmaster finds you. The Windows app plays fullscreen, works with Xbox and PlayStation controllers, and updates itself.</p>
+      <div class="get">
+        <a class="dl" id="dl" href="/download/windows">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5l7.5-1v7H3zM11.5 4.4L21 3v8.5h-9.5zM3 12.5h7.5v7L3 18.5zM11.5 12.5H21V21l-9.5-1.4z" fill="currentColor"/></svg>
+          <span><b>Download for Windows</b><small id="dl-meta">Windows 10 and 11 · 64-bit · free</small></span>
+        </a>
+        <span class="alt">No install? <a href="/">Play in your browser</a>. Same game, same friends.</span>
+      </div>
+    </div>
+    <figure class="shot">
+      <img src="assets/download-hero.jpg" alt="A dark school corridor lit by a torch and red emergency lights" onerror="this.onerror=null;this.src='assets/share.jpg'">
+      <figcaption>The Main Hall, after the power goes</figcaption>
+    </figure>
+  </section>
+
+  <section class="board">
+    <div>
+      <h2>Installing</h2>
+      <ol>
+        <li><div><b>Open the file you downloaded.</b> <span>It is called The-Last-Bell-Setup.exe.</span></div></li>
+        <li><div><b>If Windows says it protected your PC, click “More info”, then “Run anyway”.</b> <span>The game is new and not signed by a big publisher yet, so Windows does not recognise it.</span></div></li>
+        <li><div><b>Choose where to install it, then Install.</b> <span>You get a desktop shortcut and a Start menu entry.</span></div></li>
+        <li><div><b>Type a name, create a lobby, and send your friends the code.</b> <span>Friends on the website and friends on the app can play in the same lobby.</span></div></li>
+      </ol>
+      <p class="smart"><kbd>F11</kbd> or <kbd>Alt</kbd>+<kbd>Enter</kbd> switches between fullscreen and a window. When a new version is out, the game downloads it while you play and installs it the next time you start.</p>
+    </div>
+    <div>
+      <h2>What you need</h2>
+      <dl class="req">
+        <dt>System</dt><dd>Windows 10 or 11, 64-bit</dd>
+        <dt>Graphics</dt><dd>Any graphics card from the last 8 years. Graphics settings go from Low (older laptops) to Ultra.</dd>
+        <dt>Internet</dt><dd>Needed: every match is online</dd>
+        <dt>Disk</dt><dd>About 400 MB</dd>
+        <dt>Sound</dt><dd>Headphones. You will want to hear where he is.</dd>
+      </dl>
+      <p class="notes" id="rel-notes">Uninstall any time from Windows Settings → Apps.</p>
+    </div>
+  </section>
+
+  <footer>
+    <span id="ver-line">The Last Bell</span>
+    <a id="all-rel" href="https://github.com/umerahmad7383-coder/bell/releases">All versions</a>
+    <a href="/">Play in the browser</a>
+  </footer>
+</main>
+<script>
+  // show the newest version, its size and date (from GitHub); the button works without this
+  (async () => {
+    try {
+      const r = await fetch('https://api.github.com/repos/umerahmad7383-coder/bell/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) return;
+      const rel = await r.json();
+      const exe = (rel.assets || []).find((a) => /Setup\.exe$/i.test(a.name));
+      if (!exe) return;
+      const mb = Math.round(exe.size / 1048576);
+      const when = new Date(rel.published_at).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+      document.getElementById('dl-meta').textContent = `Version ${String(rel.tag_name).replace(/^v/, '')} · ${mb} MB · Windows 10 and 11, 64-bit`;
+      document.getElementById('ver-line').textContent = `Version ${String(rel.tag_name).replace(/^v/, '')}, released ${when}`;
+      document.getElementById('dl').href = exe.browser_download_url;
+    } catch { /* offline or rate-limited: the plain link still works */ }
+  })();
+</script>
+</body>
+</html>

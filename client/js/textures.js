@@ -2,15 +2,82 @@
 // no image downloads, so the client stays tiny and has no asset licensing issues.
 import * as THREE from 'three';
 
+// Higher quality settings paint every texture at 2x or 4x resolution (same artwork, crisper), and
+// then add real surface detail: fine layered grain in the colour, plus a normal map (relief the
+// light catches) and a roughness map (what shines and what stays matte), computed from the pixels.
+let K = 1, ANISO = 4;
 function make(w, h, draw, repeat = true) {
+  const k = w * K > 2048 ? 1 : K; // the full-screen scare picture is big enough already
   const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  draw(c.getContext('2d'), w, h);
+  c.width = w * k; c.height = h * k;
+  const ctx = c.getContext('2d', { willReadFrequently: false });
+  if (k !== 1) ctx.scale(k, k);
+  draw(ctx, w, h);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.anisotropy = 4;
+  t.anisotropy = ANISO;
   return t;
+}
+
+// ---- surface detail ----
+// tileable value noise: the lattice wraps every `p` cells, so the textures still tile seamlessly
+function hash2(x, y, seed) { let h = (x * 374761393 + y * 668265263 + seed * 2147483647) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967295; }
+function vnoise(x, y, p, seed) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const x0 = ((xi % p) + p) % p, y0 = ((yi % p) + p) % p, x1 = (x0 + 1) % p, y1 = (y0 + 1) % p;
+  const a = hash2(x0, y0, seed), b = hash2(x1, y0, seed), c = hash2(x0, y1, seed), d = hash2(x1, y1, seed);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+/**
+ * Adds grain, a normal map and a roughness map to a painted texture.
+ *   grain   how much fine mottling to add to the colour (0..0.2)
+ *   bump    strength of the relief (dark lines such as grout and panel edges sink in; grain adds micro relief)
+ *   rough   [base, spread]: roughness = base + spread x (how dark the pixel is), so grime and grout stay matte
+ *   cells   size of the coarsest grain in noise cells across the texture
+ */
+function detail(tex, { grain = 0.06, bump = 1.5, rough = [0.85, 0.2], cells = 6, micro = 0.5, seed = 1 } = {}) {
+  const cv = tex.image, w = cv.width, h = cv.height, ctx = cv.getContext('2d');
+  const img = ctx.getImageData(0, 0, w, h), d = img.data, n = w * h;
+  const H = new Float32Array(n), L = new Float32Array(n);
+  const px = Math.max(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, o = i * 4;
+    // three octaves of grain, from blotches to fine pores
+    const f1 = cells, f2 = cells * 4, f3 = cells * 16;
+    const g = vnoise((x / px) * f1, (y / px) * f1, Math.round(f1 * w / px) || 1, seed) * 0.5
+      + vnoise((x / px) * f2, (y / px) * f2, Math.round(f2 * w / px) || 1, seed + 7) * 0.3
+      + vnoise((x / px) * f3, (y / px) * f3, Math.round(f3 * w / px) || 1, seed + 13) * 0.2;
+    const m = 1 + grain * (g - 0.5) * 2;
+    d[o] = Math.min(255, d[o] * m); d[o + 1] = Math.min(255, d[o + 1] * m); d[o + 2] = Math.min(255, d[o + 2] * m);
+    const lum = (0.299 * d[o] + 0.587 * d[o + 1] + 0.114 * d[o + 2]) / 255;
+    L[i] = lum; H[i] = lum * (1 - micro) + g * micro;
+  }
+  ctx.putImageData(img, 0, 0); tex.needsUpdate = true;
+  // soften the height a little so single specks do not become needles
+  const S = new Float32Array(n);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const xm = (x - 1 + w) % w, xp = (x + 1) % w, ym = (y - 1 + h) % h, yp = (y + 1) % h;
+    S[y * w + x] = (H[y * w + x] * 4 + H[y * w + xm] + H[y * w + xp] + H[ym * w + x] + H[yp * w + x]) / 8;
+  }
+  const nc = document.createElement('canvas'); nc.width = w; nc.height = h;
+  const rc = document.createElement('canvas'); rc.width = w; rc.height = h;
+  const nctx = nc.getContext('2d'), rctx = rc.getContext('2d');
+  const ni = nctx.createImageData(w, h), ri = rctx.createImageData(w, h);
+  const strength = bump * (w / 256) * 2; // the same relief whatever the resolution
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const xm = (x - 1 + w) % w, xp = (x + 1) % w, ym = (y - 1 + h) % h, yp = (y + 1) % h, i = y * w + x, o = i * 4;
+    const dx = (S[y * w + xp] - S[y * w + xm]) * strength, dy = (S[yp * w + x] - S[ym * w + x]) * strength;
+    let nx = -dx, ny = dy, nz = 1; const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
+    ni.data[o] = (nx * 0.5 + 0.5) * 255; ni.data[o + 1] = (ny * 0.5 + 0.5) * 255; ni.data[o + 2] = (nz * 0.5 + 0.5) * 255; ni.data[o + 3] = 255;
+    const r = Math.max(0.04, Math.min(1, rough[0] + rough[1] * (0.5 - L[i]) * 2 + (H[i] - 0.5) * 0.08));
+    ri.data[o] = ri.data[o + 1] = ri.data[o + 2] = r * 255; ri.data[o + 3] = 255;
+  }
+  nctx.putImageData(ni, 0, 0); rctx.putImageData(ri, 0, 0);
+  const wrap = (c) => { const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.NoColorSpace; t.wrapS = tex.wrapS; t.wrapT = tex.wrapT; t.anisotropy = ANISO; return t; };
+  tex.userData.normal = wrap(nc); tex.userData.rough = wrap(rc);
+  return tex;
 }
 const R = (a, b) => a + Math.random() * (b - a);
 
@@ -41,7 +108,8 @@ function streaks(ctx, w, h, n) {
   }
 }
 
-export function buildTextures() {
+export function buildTextures(Q = {}) {
+  K = Q.texScale || 1; ANISO = Q.aniso || 4;
   const T = {};
 
   // 1 m wide x 3.2 m tall institutional wall: grimy plaster above a painted dado band
@@ -302,6 +370,24 @@ export function buildTextures() {
     for (let i = 0; i < 26; i++) { c.fillStyle = `hsla(${R(0, 360)},45%,${R(25, 55)}%,0.55)`; c.beginPath(); c.arc(R(10, 118), R(10, 118), R(4, 22), 0, 6.28); c.fill(); }
     c.fillStyle = '#0c0c0c'; c.fillRect(56, 30, 14, 80); c.beginPath(); c.arc(63, 26, 10, 0, 6.28); c.fill();
   }, false);
+  // surface detail for everything you walk past (Medium and up)
+  if (Q.detail) {
+    const D = {
+      wall: { grain: 0.09, bump: 1.4, rough: [0.88, 0.12], cells: 5, seed: 1 },
+      concrete: { grain: 0.14, bump: 2.6, rough: [0.92, 0.08], cells: 6, micro: 0.65, seed: 2 },
+      lino: { grain: 0.05, bump: 0.9, rough: [0.32, 0.45], cells: 4, micro: 0.3, seed: 3 },
+      wood: { grain: 0.06, bump: 1.8, rough: [0.42, 0.35], cells: 3, micro: 0.35, seed: 4 },
+      ceiling: { grain: 0.1, bump: 2.4, rough: [0.94, 0.05], cells: 8, micro: 0.6, seed: 5 },
+      grime: { grain: 0.1, bump: 1.6, rough: [0.7, 0.25], cells: 4, seed: 6 },
+      door: { grain: 0.07, bump: 2.2, rough: [0.55, 0.3], cells: 3, micro: 0.35, seed: 7 },
+      locker: { grain: 0.06, bump: 2.6, rough: [0.42, 0.4], cells: 5, micro: 0.3, seed: 8 },
+      tile: { grain: 0.04, bump: 2.2, rough: [0.22, 0.6], cells: 6, micro: 0.25, seed: 9 },
+      curtain: { grain: 0.08, bump: 2.0, rough: [0.95, 0.04], cells: 10, micro: 0.5, seed: 10 },
+      board: { grain: 0.05, bump: 0.6, rough: [0.85, 0.1], cells: 6, micro: 0.4, seed: 11 },
+      uniform: { grain: 0.06, bump: 1.2, rough: [0.9, 0.06], cells: 12, micro: 0.6, seed: 12 },
+    };
+    for (const [k, o] of Object.entries(D)) if (T[k]) detail(T[k], o);
+  }
   return T;
 }
 

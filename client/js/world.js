@@ -7,7 +7,7 @@ import { buildItemMesh } from './items.js';
 
 // deterministic decoration so every client sees the same clutter
 function mulberry(seed) { return () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-const rng = mulberry(1987);
+let rng = mulberry(1987); // reset at the start of every build: the clutter (and the baked lighting that matches it) must be identical every match
 const R = (a, b) => a + rng() * (b - a);
 
 function colored(g, color) {
@@ -64,26 +64,45 @@ class Quads {
 }
 
 export function buildWorld(scene, T, Q) {
+  rng = mulberry(1987);
   const world = { doors: [], items: new Map(), power: false };
+  // everything added to the scene from here to the end of the build is a candidate for baked lighting (lightmap.js)
+  const bakeStart = scene.children.length;
+  const emit = (world.emitters = []); // light sources the lighting bake needs: windows (moonlight) and exit signs
   // PERFORMANCE: every light is evaluated for every pixel, so the shading model matters a lot.
   // Lambert (diffuse only) is several times cheaper than the physically based Standard material
   // and looks the same on matte plaster, concrete and wood. Only High keeps glossy floors.
-  const pbr = (o) => new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0, ...o });
-  const std = (o) => { const { roughness, metalness, ...rest } = o; return new THREE.MeshLambertMaterial(rest); };
+  // Medium and up: every textured surface also gets its relief (normal) map, so torchlight rakes
+  // across plaster, grout and panel edges. High: floors, lockers, doors, furniture and metal become
+  // physically based, with roughness maps (polished lino shines, grime stays matte) and reflections.
+  // Ultra: every surface is physically based.
+  const det = (o) => {
+    const m = o.map, u = m && m.userData;
+    if (!Q.detail || !u || !u.normal) return o;
+    return { normalMap: u.normal, normalScale: new THREE.Vector2(o.bump ?? 1, o.bump ?? 1), ...o };
+  };
+  const clean = (o) => { const { bump, ...rest } = o; return rest; };
+  const pbr = (o) => {
+    o = det(o); const u = o.map && o.map.userData;
+    const rough = Q.detail && u && u.rough ? { roughnessMap: u.rough, roughness: 1 } : {};
+    return new THREE.MeshStandardMaterial(clean({ roughness: 0.9, metalness: 0, ...o, ...rough }));
+  };
+  const std = (o) => { const { roughness, metalness, envMapIntensity, ...rest } = clean(det(o)); return new THREE.MeshLambertMaterial(rest); };
   const gloss = Q.gloss ? pbr : std;
+  const any = Q.pbrAll ? pbr : std;
   const M = {
-    wall: std({ map: T.wall }),
-    concrete: std({ map: T.concrete }),
-    lino: gloss({ map: T.lino, roughness: 0.55 }),
+    wall: any({ map: T.wall, bump: 0.8 }),
+    concrete: any({ map: T.concrete, bump: 1.2 }),
+    lino: gloss({ map: T.lino, roughness: 0.55, bump: 0.6 }),
     wood: gloss({ map: T.wood, roughness: 0.6 }),
-    ceiling: std({ map: T.ceiling }),
-    prop: std({ map: T.grime, vertexColors: true }),
-    door: std({ map: T.door }),
-    locker: std({ map: T.locker }),
-    iron: std({ color: 0x1b1c1e }),
-    trim: std({ color: 0x5d5a4c, map: T.grime }),
-    tile: gloss({ map: T.tile, roughness: 0.35 }),
-    curtain: std({ map: T.curtain, side: THREE.DoubleSide }),
+    ceiling: any({ map: T.ceiling, bump: 1.1 }),
+    prop: gloss({ map: T.grime, vertexColors: true, roughness: 0.75 }),
+    door: gloss({ map: T.door, roughness: 0.6 }),
+    locker: gloss({ map: T.locker, metalness: 0.35, roughness: 0.5, bump: 1.2 }),
+    iron: gloss({ color: 0x1b1c1e, metalness: 0.75, roughness: 0.45 }),
+    trim: any({ color: 0x5d5a4c, map: T.grime }),
+    tile: gloss({ map: T.tile, roughness: 0.35, bump: 1.1 }),
+    curtain: any({ map: T.curtain, side: THREE.DoubleSide, bump: 1.4 }),
   };
   const add = (mesh, cast = true, recv = true) => { mesh.castShadow = cast && Q.shadows; mesh.receiveShadow = recv && Q.shadows; scene.add(mesh); return mesh; };
   const walkable = (x, z) => x >= 0 && z >= 0 && x < W && z < H && MAP.grid[z * W + x] !== WALL;
@@ -515,6 +534,7 @@ export function buildWorld(scene, T, Q) {
   for (const w of MAP.windows) {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(0.92, 1.4), windowMat);
     m.position.set(w.x + 0.5 + w.nx * 0.505, 1.75, w.z + 0.5 + w.nz * 0.505); m.rotation.y = Math.atan2(w.nx, w.nz); scene.add(m);
+    emit.push({ kind: 'window', p: [m.position.x, m.position.y, m.position.z], n: [w.nx, 0, w.nz], w: 0.92, h: 1.4 });
     const sill = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.05, 0.12), M.trim); sill.position.set(w.x + 0.5 + w.nx * 0.55, 1.03, w.z + 0.5 + w.nz * 0.55); sill.rotation.y = m.rotation.y; scene.add(sill);
   }
   function writing(text, x, y, z, ry, w = 3.4, h = 0.85, color) {
@@ -558,12 +578,13 @@ export function buildWorld(scene, T, Q) {
     }
     // emergency exit signs: battery-powered, so they glow even in a blackout
     // (all the signs share one texture and are merged into two meshes: the glowing faces and the metal boxes)
-    const exitShared = new THREE.MeshBasicMaterial({ map: exitTexture(0), color: 0x9a9a9a });
+    const exitShared = new THREE.MeshBasicMaterial({ map: exitTexture(0), color: Q.bloom ? new THREE.Color(1.5, 1.5, 1.5) : 0x9a9a9a }); // bright enough to glow through the bloom
     const exitMat = () => exitShared;
     const signFaces = [], signBoxes = [], tmp = new THREE.Object3D();
     const place = (geo, list, x, y, z, ry, local) => { tmp.position.set(x, y, z); tmp.rotation.set(0, ry, 0); tmp.updateMatrix(); const m = new THREE.Matrix4().makeTranslation(local[0], local[1], local[2]); if (local[3]) m.multiply(new THREE.Matrix4().makeRotationY(local[3])); list.push(geo.applyMatrix4(m).applyMatrix4(tmp.matrix)); };
     const hang = (x, z, ry) => {
       const y = CEIL_Y - 0.42;
+      for (const s of [1, -1]) emit.push({ kind: 'exit', p: [x + Math.sin(ry) * 0.02 * s, y, z + Math.cos(ry) * 0.02 * s], n: [Math.sin(ry) * s, 0, Math.cos(ry) * s], w: 0.62, h: 0.23 });
       place(new THREE.PlaneGeometry(0.62, 0.23), signFaces, x, y, z, ry, [0, 0, 0.012]);
       place(new THREE.PlaneGeometry(0.62, 0.23), signFaces, x, y, z, ry, [0, 0, -0.012, Math.PI]);
       place(new THREE.BoxGeometry(0.66, 0.27, 0.02).toNonIndexed(), signBoxes, x, y, z, ry, [0, 0, 0]);
@@ -573,7 +594,7 @@ export function buildWorld(scene, T, Q) {
     hang(14.9, 30, 0, 0); hang(14.9, 14, 0, 0); hang(46.9, 30, 0, 0); hang(46.9, 14, 0, 0); // corridors
     hang(14.9, 48, 0, 0); hang(46.9, 48, 0, 0); hang(30, 57.9, Math.PI / 2, 0);              // south wing
     scene.add(new THREE.Mesh(mergeGeometries(signFaces.map((g) => g.toNonIndexed())), exitShared), new THREE.Mesh(mergeGeometries(signBoxes), M.iron));
-    { const m = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.3), exitMat(0)); m.position.set(5.01, 2.85, 22.5); m.rotation.y = Math.PI / 2; scene.add(m); } // above the gate
+    { const m = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.3), exitMat(0)); m.position.set(5.01, 2.85, 22.5); m.rotation.y = Math.PI / 2; scene.add(m); emit.push({ kind: 'exit', p: [5.03, 2.85, 22.5], n: [1, 0, 0], w: 0.8, h: 0.3 }); } // above the gate
     // stopped clocks
     const clockGeo = new THREE.CircleGeometry(0.26, 20), clockMat = std({ map: T.clock });
     const clockList = [];
@@ -637,11 +658,12 @@ export function buildWorld(scene, T, Q) {
 
   // ------------------------------------------------------------ ceiling lights (emissive fixtures + a small pool of real lights)
   const fixtures = MAP.lights.map((l) => ({ ...l, lit: false, faulty: rng() < 0.3, phase: R(0, 100), cur: 0 }));
-  const fixMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.2, 0.05, 0.26), new THREE.MeshBasicMaterial({ color: 0xffffff }), fixtures.length);
+  const fixMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.2, 0.05, 0.26), new THREE.MeshBasicMaterial({ color: Q.bloom ? new THREE.Color(2.4, 2.4, 2.4) : 0xffffff }), fixtures.length);
   const OFF = new THREE.Color(0.035, 0.037, 0.035), ON = new THREE.Color(0.8, 0.95, 0.82), RED = new THREE.Color(0.55, 0.03, 0.02), tmpC = new THREE.Color();
   fixtures.forEach((f, i) => { dummy.position.set(f.x, f.y, f.z); dummy.rotation.set(0, f.alongX ? 0 : Math.PI / 2, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix(); fixMesh.setMatrixAt(i, dummy.matrix); fixMesh.setColorAt(i, OFF); });
   scene.add(fixMesh);
   const fixCount = fixtures.length, FIRE = new THREE.Color(1, 0.35, 0.12);
+  world.fixtures = fixtures;
   if (world.boiler) fixtures.push({ ...world.boiler, boiler: true, lit: true, phase: 0, cur: 0 });
   // PERFORMANCE: a light costs GPU time on every pixel even at zero brightness. While the power is
   // off only a couple of emergency lamps can be near you, so the rest of the pool is switched off
@@ -650,8 +672,8 @@ export function buildWorld(scene, T, Q) {
   for (let i = 0; i < Q.lights; i++) { const l = new THREE.PointLight(0xffffff, 0, 11, 2); l.visible = i < Q.darkLights; scene.add(l); pool.push(l); }
   let activeLights = Q.darkLights;
   let flickerT = 0, assignT = 0, nearest = [];
-  world.setPower = (on) => { world.power = on; activeLights = on ? Q.lights : Q.darkLights; pool.forEach((l, i) => { l.visible = i < activeLights; }); for (const u of unlit) u.mat.color.set(on ? u.on : 0x000000); if (world.cam) world.cam.mat.color.set(on ? 0xffffff : 0x000000); refreshFixtures(); };
-  world.flicker = (secs) => { flickerT = Math.max(flickerT, secs); };
+  world.setPower = (on) => { world.power = on; if (world.lm) world.lm.setPower(on); activeLights = on ? Q.lights : Q.darkLights; pool.forEach((l, i) => { l.visible = i < activeLights; }); for (const u of unlit) u.mat.color.set(on ? u.on : 0x000000); if (world.cam) world.cam.mat.color.set(on ? 0xffffff : 0x000000); refreshFixtures(); };
+  world.flicker = (secs) => { flickerT = Math.max(flickerT, secs); if (world.lm) world.lm.flicker(secs); };
   function refreshFixtures() {
     fixtures.forEach((f, i) => {
       if (f.boiler) return;
@@ -662,7 +684,7 @@ export function buildWorld(scene, T, Q) {
   }
   refreshFixtures();
   /** the final bell: every light in the school turns red and pulses like a siren */
-  world.setAlarm = (on) => { world.alarm = on; activeLights = on ? Q.lights : world.power ? Q.lights : Q.darkLights; pool.forEach((l, i) => { l.visible = i < activeLights; }); refreshFixtures(); assignT = 0; };
+  world.setAlarm = (on) => { world.alarm = on; if (world.lm) world.lm.setAlarm(on); activeLights = on ? Q.lights : world.power ? Q.lights : Q.darkLights; pool.forEach((l, i) => { l.visible = i < activeLights; }); refreshFixtures(); assignT = 0; };
 
   // ------------------------------------------------------------ items
   const glowMat = (color) => new THREE.SpriteMaterial({ map: T.glow, color, transparent: true, opacity: 0.25, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -797,10 +819,13 @@ export function buildWorld(scene, T, Q) {
     }
     if (flickerT > 0) flickerT -= dt;
     let dirty = false;
+    if (world.lm) world.lm.update(dt, t);
     pool.forEach((l, k) => {
       const o = nearest[k];
       if (!o || !l.visible) { l.intensity = 0; return; }
       const f = o.f;
+      // lamps that are in the baked lighting light the walls through the lightmap; this light is for people and props
+      if (world.lm) world.lm.setMask(k, f.boiler || (!f.emergency && f.faulty) ? 1 : 0);
       if (f.boiler) { l.position.set(f.x, f.y, f.z); l.color.copy(FIRE); l.intensity = 3.5 + Math.sin(t * 9) * 0.6 + Math.sin(t * 23) * 0.4; return; }
       let v = 1;
       if (world.alarm) v = 0.35 + 0.65 * Math.abs(Math.sin(t * 2.6));
@@ -872,6 +897,44 @@ export function buildWorld(scene, T, Q) {
         for (const m of list) { scene.remove(m); m.geometry.dispose(); }
       } catch { /* leave this tile as separate meshes */ }
     }
+  }
+
+  // ------------------------------------------------------------ meshes that take baked lighting
+  // Every static, lit mesh of the build, in build order (the order is the link to the baked data, so it
+  // must not depend on the quality setting). Instanced meshes become ordinary merged meshes so each copy
+  // can have its own patch of the lightmap; everything is un-indexed so the lightmap coordinates can be
+  // given per triangle corner, exactly as Blender unwrapped them.
+  world.bakeMeshes = [];
+  const top = scene.children.slice(bakeStart);
+  for (const o of top) {
+    if (!o.isMesh || o.userData.noBake || !o.visible) continue;
+    const mat = o.material;
+    if (!mat || Array.isArray(mat) || !(mat.isMeshLambertMaterial || mat.isMeshStandardMaterial)) continue;
+    let mesh = o;
+    if (o.isInstancedMesh) {
+      const parts = [], m4 = new THREE.Matrix4(), c = new THREE.Color();
+      const base = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry;
+      for (let i = 0; i < o.count; i++) {
+        o.getMatrixAt(i, m4);
+        const g = base.clone().applyMatrix4(m4);
+        if (o.instanceColor) {
+          o.getColorAt(i, c);
+          const n = g.attributes.position.count, prev = g.attributes.color, a = new Float32Array(n * 3);
+          for (let k = 0; k < n; k++) { a[k * 3] = c.r * (prev ? prev.getX(k) : 1); a[k * 3 + 1] = c.g * (prev ? prev.getY(k) : 1); a[k * 3 + 2] = c.b * (prev ? prev.getZ(k) : 1); }
+          g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+        }
+        parts.push(g);
+      }
+      const geo = parts.length ? mergeGeometries(parts) : null;
+      if (!geo) continue;
+      const m2 = o.instanceColor && !mat.vertexColors ? Object.assign(mat.clone(), { vertexColors: true }) : mat;
+      mesh = new THREE.Mesh(geo, m2);
+      mesh.castShadow = o.castShadow; mesh.receiveShadow = o.receiveShadow; mesh.renderOrder = o.renderOrder;
+      scene.remove(o); scene.add(mesh);
+    } else if (o.geometry.index) {
+      o.geometry = o.geometry.toNonIndexed();
+    }
+    world.bakeMeshes.push(mesh);
   }
   return world;
 }

@@ -14,8 +14,26 @@ An online co-op horror game for 2–8 players. You and your friends are locked i
 | Deployed to a public URL | **No.** It was built in a sandbox with no hosting account. Follow [Deploy](#deploy-get-a-public-link) to put it online (about 5 minutes). |
 | Tested between two physically separate PCs over the internet | **No.** Tested with separate browser processes and separate Socket.IO clients against one local server. The networking does not depend on being local, but nobody has yet played it across two networks. [Do that test](#test-between-two-separate-pcs) after deploying. |
 | Frame rate on a real GPU | **Not measured.** The sandbox has no GPU, only a software renderer. In that renderer the optimised build takes about half the time per frame that the first version did on High, but real numbers depend on your graphics card. See [Performance](#performance). |
+| Windows app | Built and run here under Linux, both from source and as a packaged build: window, splash, server connection, display modes, quitting, a full match. The Windows app folder (`The Last Bell.exe` and its files) was packaged here. The last step, wrapping it into the Setup .exe, needs Windows, so GitHub Actions does it ([The Windows app](#the-windows-app)). **Not yet installed on a real Windows PC**: do that first. |
 | Hunt Mode (player-controlled Headmaster) | Built. Rules are covered by `test/hunt.js`; balance has not been played by real groups yet. |
 | Voice chat | Built. Connection and audio flow were tested between two browsers on one machine with a fake microphone. **Not tested between real networks or by ear.** |
+
+## What is new in 2.0
+
+**A Windows app.** `desktop/` packages the game as a normal Windows program: a Setup .exe with a desktop and Start menu shortcut, the game's own icon, an uninstaller, a splash screen, fullscreen by default (F11 or Alt+Enter for a window), a Quit button, and automatic updates from GitHub Releases. It plays online through the same Render server as the website, so app players and browser players share lobbies. How to build and publish it: [The Windows app](#the-windows-app).
+
+**Graphics, rebuilt.**
+- **Baked lighting from Blender.** The whole school was lit offline in Blender Cycles, a path tracer. Light bounces between walls, floors and ceilings, corners and the gaps under desks go dark, moonlight spills in through the windows and the red emergency lamps bleed down the corridors. There are two bakes, power off and power on, and the game blends between them as the power comes back, flickers or turns red for the final bell. The tools are in `tools/bake/` if the map ever changes.
+- **Four quality levels: Low, Medium, High and Ultra.** Every surface has relief (normal) maps and roughness. On top of that come bloom on the lights, film-style tone mapping, anti-aliasing (FXAA, SMAA or 4× MSAA), soft reflections (High and up) and ambient occlusion (Ultra).
+- **Atmosphere.** Your torch now throws a visible beam through the dust, with drifting dust motes. Your friends' torches cut beams through the dark too.
+- **Detailed models.** The first-person hands have real fingers wrapped round a turned metal torch with a lens and reflector. The items (med kit, bell, bottle, can, camera, keys, battery, fuse) were rebuilt with rounded and turned shapes.
+
+**Physics you can feel.** About 80 loose props lie around the school: bins, buckets, chairs, cardboard boxes, books, cans, paint tins, lunch trays, paper and basketballs in the gym. They are real rigid bodies, so you, your friends and the Headmaster knock them over and send them rolling, each with its own impact sound (metal, plastic, wood, cardboard, a bouncing ball). You hear him crash through a corridor before you see him.
+
+**Settings, like a PC game.** Settings is split into Display, Sound, Controls and Gameplay. New:
+- **Resolution** scale.
+- **Window mode and size** (in the app).
+- **Change any keyboard key** (Controls → Keyboard and mouse: click a key, press the new one). On-screen prompts follow your keys.
 
 ## What is new in 1.3.1
 
@@ -104,6 +122,39 @@ npm start
 ```
 
 Open <http://localhost:3000>. Choose **Play (solo practice)** to walk around alone, or **Create Private Lobby** and open the invite link in a second browser window.
+
+## The Windows app
+
+The app is the game client wrapped in [Electron](https://www.electronjs.org/). Its code is in `desktop/`, and it copies `client/` into the installer when it is built. It connects to `https://bell-en9a.onrender.com`; to use another server, change `SERVER` at the top of `desktop/main.js`.
+
+### Publish it (no tools needed on your PC)
+
+GitHub builds the installer on a Windows machine and publishes it as a release:
+
+1. Upload the files to the repo (including `.github/workflows/windows-app.yml`; see the note below).
+2. The first time, open the **Actions** tab and press **Run workflow** on "Windows app". After that, it runs by itself whenever you change `desktop/package.json` on `main`.
+3. After about 10 minutes, **Releases** has a new release with `The-Last-Bell-Setup.exe`. The download page on your site (`/download`) and the menu link point to it automatically.
+
+To ship an update, raise `"version"` in `desktop/package.json` (for example `2.0.0` → `2.0.1`), and the same in `package.json` and `client/js/version.js`, then upload. GitHub builds the new release. Installed copies download it in the background and install it the next time they start; the menu shows a **Restart now** button once it is ready.
+
+Note: GitHub's drag-and-drop upload skips folders whose names start with a dot. Create the workflow file with **Add file → Create new file**, type `.github/workflows/windows-app.yml` as the name, and paste the file's contents.
+
+### Build it on your own PC instead
+
+Needs [Node.js](https://nodejs.org/) 20 or newer.
+
+```
+cd desktop
+npm install
+npm start            # try the app without installing it
+npm run dist         # makes desktop/dist/The-Last-Bell-Setup.exe
+```
+
+To publish from your PC instead of GitHub Actions, create a GitHub token with "repo" access, then run `set GH_TOKEN=your-token` followed by `npm run release`.
+
+### Windows SmartScreen
+
+The installer is not code-signed (a certificate costs money every year), so the first time someone runs it, Windows says "Windows protected your PC". Click **More info → Run anyway**. Once enough people have installed it, the warning becomes rarer. Signing it later removes the warning entirely.
 
 ## Deploy: get a public link
 
@@ -368,7 +419,17 @@ scripts/floorplan.js   map generator (not served to players)
 client/js/audio.js   synthesised sound
 client/js/textures.js  procedurally painted textures
 client/js/menubg.js    the animated school-at-night behind the menu
+client/js/lightmap.js  baked lighting: loads the Blender lightmaps and blends power off / on / alarm
+client/js/props.js     loose physics props (bins, chairs, cans…) and their impact sounds
+client/js/post.js      post-processing: bloom, ambient occlusion, anti-aliasing, film look
+client/js/atmos.js     torch beams and dust
+client/js/keys.js      rebindable keyboard controls
+client/assets/lightmap/  the baked lighting (from tools/bake)
+client/download.html   the Windows download page (/download)
 client/vendor/       three.js, Rapier, Socket.IO client (copied from npm by `npm run vendor`)
+desktop/             the Windows app (Electron): main.js, preload.js, splash.html, build/ (icon, installer art)
+tools/bake/          the lighting bake: export.mjs (game -> Blender) and bake.py (Blender Cycles)
+.github/workflows/   builds and publishes the Windows installer
 ```
 
 Libraries: three.js (MIT), Rapier (Apache-2.0), Socket.IO (MIT), Express (MIT).

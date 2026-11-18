@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { LOOKS, cleanLook } from '../shared/defs.js';
 import { buildItemMesh } from './items.js';
+import { RoundedBoxGeometry } from '../vendor/jsm/geometries/RoundedBoxGeometry.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -22,30 +23,85 @@ export class ViewModel {
     this.amb = new THREE.AmbientLight(0xffffff, 0.5);
     this.key = new THREE.DirectionalLight(0xfff1d6, 0.6); this.key.position.set(-0.4, 0.8, 0.6);
     this.scene.add(this.amb, this.key);
-    const sleeve = new THREE.MeshLambertMaterial({ color: LOOKS.top[look.top] });
-    const skin = new THREE.MeshLambertMaterial({ color: LOOKS.skin[look.skin] });
-    const dark = new THREE.MeshLambertMaterial({ color: 0x24262c });
+    // the hands are close to the lens, so they get real shading (and a soft reflection on Medium and up)
+    const sleeve = new THREE.MeshStandardMaterial({ color: LOOKS.top[look.top], roughness: 0.95 });
+    const cn = T.uniform && T.uniform.userData.normal;
+    if (cn) { sleeve.normalMap = cn; sleeve.normalScale.set(0.8, 0.8); }
+    const skin = new THREE.MeshStandardMaterial({ color: LOOKS.skin[look.skin], roughness: 0.7 });
+    const nail = new THREE.MeshStandardMaterial({ color: new THREE.Color(LOOKS.skin[look.skin]).lerp(new THREE.Color(0xf4d6cc), 0.55), roughness: 0.3 });
+    this.metal = new THREE.MeshStandardMaterial({ color: 0x23262d, roughness: 0.36, metalness: 0.35 });
+    const rubber = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.85 });
+    this.mats = { sleeve, skin, metal: this.metal };
 
-    const arm = (side) => {
+    // a fist around a bar of radius rb along Z (centre (0, cy)); side -1 = left hand (its outside is -X)
+    const fist = (side, rb, cy) => {
       const g = new THREE.Group();
-      const wrist = new THREE.Vector3(0, -0.005, 0.03), elbow = new THREE.Vector3(side * 0.11, -0.24, 0.5);
-      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.037, 0.052, wrist.distanceTo(elbow), 10), sleeve);
+      const ang = (a) => (side < 0 ? a : Math.PI - a);             // mirror an angle for the right hand
+      const at = (a, r, z) => new THREE.Vector3(Math.cos(ang(a)) * r, cy + Math.sin(ang(a)) * r, z);
+      const D = Math.PI / 180;
+      // four fingers: knuckles low on the outside, curling under the bar and up the inside
+      const F = [[-0.08, 0.0082, 172], [-0.0605, 0.0086, 178], [-0.041, 0.0081, 172], [-0.0225, 0.0072, 160]];
+      for (const [z, tr, sweep] of F) {
+        const R = rb + tr;
+        const a0 = 228 * D, a1 = a0 + sweep * D;
+        const tor = new THREE.Mesh(new THREE.TorusGeometry(R, tr, 8, 20, a1 - a0), skin);
+        tor.position.set(0, cy, z);
+        if (side < 0) tor.rotation.z = a0; else { tor.rotation.z = -a0; tor.scale.x = -1; } // mirror image for the right hand
+        g.add(tor);
+        const kn = new THREE.Mesh(new THREE.SphereGeometry(tr * 1.1, 10, 8), skin); kn.position.copy(at(a0, R, z)); g.add(kn);
+        for (const f of [0.38, 0.7]) { const j = new THREE.Mesh(new THREE.SphereGeometry(tr * 1.02, 8, 6), skin); j.position.copy(at(a0 + (a1 - a0) * f, R, z)); g.add(j); }
+        const tip = new THREE.Mesh(new THREE.SphereGeometry(tr, 10, 8), skin); tip.position.copy(at(a1, R, z)); g.add(tip);
+        const nl = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 6), nail);
+        nl.position.copy(at(a1 - 0.22, R + tr * 0.82, z)); nl.scale.set(0.0022, tr * 0.72, tr * 0.7); nl.rotation.z = ang(a1 - 0.22); g.add(nl);
+      }
+      // back of the hand on the outside, the thumb along the top (resting on the switch)
+      const back = new THREE.Mesh(new RoundedBoxGeometry(0.026, 0.062, 0.084, 3, 0.011), skin);
+      back.position.copy(at(196 * D, rb + 0.018, -0.05)); back.rotation.z = ang(196 * D); back.rotation.y = side * -0.06; g.add(back);
+      const pad = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10), skin);
+      pad.position.copy(at(140 * D, rb + 0.012, -0.026)); pad.scale.set(0.017, 0.016, 0.03); pad.rotation.z = ang(140 * D); g.add(pad);
+      const t1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0096, 0.03, 4, 10), skin);
+      t1.rotation.x = Math.PI / 2 - 0.08; t1.position.copy(at(112 * D, rb + 0.0094, -0.05)); g.add(t1);
+      const t2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0089, 0.018, 4, 10), skin);
+      t2.rotation.x = Math.PI / 2 + 0.05; t2.position.copy(at(100 * D, rb + 0.0088, -0.082)); g.add(t2);
+      const tn = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 6), nail);
+      tn.position.copy(at(100 * D, rb + 0.0168, -0.088)); tn.scale.set(0.0072, 0.0022, 0.008); g.add(tn);
+      // wrist into the cuff
+      const wr = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 0.03, 4, 12), skin);
+      wr.scale.set(1, 0.85, 1); wr.rotation.x = Math.PI / 2 - 0.25; wr.position.copy(at(205 * D, rb + 0.018, 0.012)); g.add(wr);
+      return g;
+    };
+
+    const arm = (side, rb, cy) => {
+      const g = new THREE.Group();
+      const wrist = new THREE.Vector3(side * 0.03, cy - 0.022, 0.04), elbow = new THREE.Vector3(side * 0.12, -0.24, 0.5);
+      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.039, 0.054, wrist.distanceTo(elbow), 16, 1, true), sleeve);
       fore.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), wrist.clone().sub(elbow).normalize());
       fore.position.copy(wrist).add(elbow).multiplyScalar(0.5);
       g.add(fore);
-      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.041, 0.041, 0.035, 10), sleeve); cuff.quaternion.copy(fore.quaternion); cuff.position.copy(wrist); g.add(cuff);
-      const palm = new THREE.Mesh(new THREE.BoxGeometry(0.082, 0.05, 0.095), skin); palm.position.set(0, 0, -0.03); g.add(palm);
-      const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.04, 0.05), skin); fingers.position.set(0, -0.022, -0.085); fingers.rotation.x = 0.9; g.add(fingers);
-      const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.03, 0.065), skin); thumb.position.set(-side * 0.048, 0.012, -0.055); thumb.rotation.y = side * 0.35; g.add(thumb);
+      const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.039, 0.008, 8, 18), sleeve); cuff.quaternion.copy(fore.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2)); cuff.position.copy(wrist); g.add(cuff);
+      g.add(fist(side, rb, cy));
       this.scene.add(g);
       return g;
     };
-    this.L = arm(-1); this.R = arm(1);
-    // torch
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.021, 0.17, 10), dark); body.rotation.x = Math.PI / 2; body.position.set(0, 0.048, -0.045);
-    const headM = new THREE.Mesh(new THREE.CylinderGeometry(0.031, 0.022, 0.05, 12), dark); headM.rotation.x = -Math.PI / 2; headM.position.set(0, 0.048, -0.15);
-    this.lens = new THREE.Mesh(new THREE.CircleGeometry(0.027, 14), new THREE.MeshBasicMaterial({ color: 0xfff2c0 })); this.lens.rotation.y = Math.PI; this.lens.position.set(0, 0.048, -0.176);
-    this.L.add(body, headM, this.lens);
+    this.L = arm(-1, 0.0205, 0.048); this.R = arm(1, 0.016, 0.045);
+
+    // torch: a turned aluminium body, knurled grip, flared head, bezel, reflector and lens
+    const prof = [[0, 0], [0.017, 0], [0.0205, 0.004], [0.0205, 0.014], [0.0185, 0.016], [0.0185, 0.019], [0.0212, 0.021]];
+    for (let y = 0.024; y < 0.104; y += 0.005) prof.push([0.0212, y], [0.0201, y + 0.0025]);
+    prof.push([0.0212, 0.106], [0.0212, 0.118], [0.0196, 0.121], [0.0222, 0.13], [0.0292, 0.168], [0.031, 0.172], [0.031, 0.19], [0.0322, 0.192], [0.0322, 0.2], [0.0282, 0.2015], [0.0275, 0.199]);
+    const lathe = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), 28);
+    lathe.rotateX(-Math.PI / 2); lathe.translate(0, 0.048, 0.04);   // axis along -Z, tail at z = 0.04
+    const body = new THREE.Mesh(lathe, this.metal);
+    const refl = new THREE.Mesh(new THREE.LatheGeometry([new THREE.Vector2(0.004, 0), new THREE.Vector2(0.012, 0.004), new THREE.Vector2(0.021, 0.012), new THREE.Vector2(0.0272, 0.02)], 24),
+      new THREE.MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.15, metalness: 1 }));
+    refl.geometry.rotateX(-Math.PI / 2); refl.position.set(0, 0.048, -0.139);
+    this.lens = new THREE.Mesh(new THREE.CircleGeometry(0.0272, 24), new THREE.MeshBasicMaterial({ color: 0xfff2c0, transparent: true, opacity: 0.55, depthWrite: false }));
+    this.lens.rotation.y = Math.PI; this.lens.position.set(0, 0.048, -0.1595);
+    this.led = new THREE.Mesh(new THREE.CircleGeometry(0.0055, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    this.led.rotation.y = Math.PI; this.led.position.set(0, 0.048, -0.141);
+    const sw = new THREE.Mesh(new RoundedBoxGeometry(0.011, 0.005, 0.016, 2, 0.002), rubber); sw.position.set(0, 0.048 + 0.0222, -0.096);
+    const lanyard = new THREE.Mesh(new THREE.TorusGeometry(0.006, 0.0014, 6, 12), this.metal); lanyard.position.set(0, 0.048 - 0.02, 0.043); lanyard.rotation.y = Math.PI / 2;
+    this.L.add(body, refl, this.lens, this.led, sw, lanyard);
     this.holder = new THREE.Group(); this.R.add(this.holder);
 
     // --- jumpscare rig: the Headmaster's face and hands, right in yours ---
@@ -162,7 +218,8 @@ export class ViewModel {
       g.position.set(-0.185 + this.swayX - bobX, -0.2 - h * 0.34 + this.swayY + bobY + idle - run * 0.05 - (s.crouch ? 0.0 : 0), -0.4 + h * 0.08);
       g.rotation.set(h * 0.8 + run * 0.25 + bobY * 2, -0.14 + this.swayX * 2 + Math.sin(s.bob) * 0.03 * run, 0.12 + run * 0.2);
       g.visible = this.showL > 0.02 && !this.scaring;
-      this.lens.material.color.setHex(s.flash ? 0xfff2c0 : 0x2a2a26);
+      this.lens.material.color.setHex(s.flash ? 0xfff2c0 : 0x3a3a36); this.lens.material.opacity = s.flash ? 0.75 : 0.35;
+      this.led.material.color.setHex(s.flash ? 0xffffff : 0x2a2a28);
     }
     // right hand + item
     {
@@ -184,7 +241,10 @@ export class ViewModel {
     // brightness follows the surroundings: your torch spill, powered lights, lightning
     const l = clamp(s.light, 0.12, 2);
     this.amb.intensity = 0.55 * l; this.key.intensity = 0.9 * l;
+    this.scene.environmentIntensity = 0.1 * l;
   }
+  /** a soft reflection map for the metal and skin (Medium and up) */
+  setEnv(tex) { this.scene.environment = tex; this.metal.metalness = tex ? 0.65 : 0.35; this.metal.roughness = tex ? 0.32 : 0.45; }
   resize() { this.cam.aspect = innerWidth / innerHeight; this.cam.updateProjectionMatrix(); }
   dispose() { this.scene.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); }
 }

@@ -45,6 +45,7 @@
   <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-exit" viewBox="0 0 24 24"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l-4-4 4-4M6 12h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="9" r="1.3" fill="currentColor"/><circle cx="15" cy="15" r="1.3" fill="currentColor"/><circle cx="15" cy="9" r="1.3" fill="currentColor"/><circle cx="9" cy="15" r="1.3" fill="currentColor"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3.5v11M7.5 10.5L12 15l4.5-4.5M4.5 16.5v2a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 </svg>
 
@@ -117,10 +118,12 @@
           <button id="btn-character" class="stud"><svg><use href="#i-person"/></svg><span>Character</span></button>
           <button id="btn-settings" class="stud"><svg><use href="#i-gear"/></svg><span>Settings</span></button>
           <button id="btn-controls" class="stud"><svg><use href="#i-keys"/></svg><span>Controls</span></button>
+          <button id="btn-exit" class="stud" hidden><svg><use href="#i-exit"/></svg><span>Quit</span></button>
         </div>
         <div id="conn" class="conn">Connecting to the server…</div>
         <div id="update" class="update" hidden><span>A new version of the game is out.</span><button id="btn-update" class="btn small primary">Reload</button></div>
         <p id="version" class="version"></p>
+        <a id="dl-win" class="dl-win" href="/download" hidden><svg><use href="#i-download"/></svg><span>Get the Windows app<small>Fullscreen, controller-ready, updates itself</small></span></a>
         <p id="pad-status" class="pad-status" hidden></p>
         <div id="gpu-warn" class="error small" hidden></div>
       </div>
@@ -218,27 +221,59 @@
     <div class="board">
       <button class="close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button>
       <h2>Settings</h2>
-      <div class="sliders">
-        <label class="slider">Mouse sensitivity<input id="set-sens" type="range" min="0.3" max="3" step="0.05"></label>
-        <label class="slider">Volume<input id="set-vol" type="range" min="0" max="1" step="0.02"></label>
-        <label class="slider">Field of view<input id="set-fov" type="range" min="60" max="100" step="1"></label>
-        <label class="slider">Brightness<input id="set-bright" type="range" min="0.6" max="1.8" step="0.05"></label>
-        <label class="slider">Controller look speed<input id="set-padsens" type="range" min="0.4" max="2.2" step="0.05"></label>
+      <div class="tabs" role="tablist">
+        <button class="tab on" data-stab="display" role="tab" aria-selected="true"><span class="lbl">Display</span></button>
+        <button class="tab" data-stab="sound" role="tab" aria-selected="false"><span class="lbl">Sound</span></button>
+        <button class="tab" data-stab="controls" role="tab" aria-selected="false"><span class="lbl">Controls</span></button>
+        <button class="tab" data-stab="game" role="tab" aria-selected="false"><span class="lbl">Gameplay</span></button>
       </div>
-      <label class="select">Graphics
-        <select id="set-quality"><option value="low">Low: no shadows, fewer lights</option><option value="medium">Medium</option><option value="high">High</option></select>
-      </label>
-      <div class="toggles">
-        <label class="toggle"><input id="set-dynres" type="checkbox"><span>Lower the resolution automatically when the frame rate drops</span></label>
-        <label class="toggle"><input id="set-showfps" type="checkbox"><span>Show frame rate</span></label>
-        <label class="toggle"><input id="set-togglecrouch" type="checkbox"><span>Press crouch once instead of holding it</span></label>
-        <label class="toggle"><input id="set-tips" type="checkbox"><span>Show control tips at the start of a match</span></label>
-        <label class="toggle"><input id="set-ptt" type="checkbox"><span>Voice chat: hold V to talk instead of an open microphone</span></label>
-        <label class="toggle"><input id="set-jumpscares" type="checkbox"><span>Jumpscares: a sudden face, a scream and a brief flash when he gets you</span></label>
-        <label class="toggle"><input id="set-padinvert" type="checkbox"><span>Controller: invert looking up and down</span></label>
-        <label class="toggle"><input id="set-vibrate" type="checkbox"><span>Controller: vibrate when he hits you</span></label>
+      <div class="stab" data-stab="display">
+        <label class="select">Graphics quality
+          <select id="set-quality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="ultra">Ultra</option></select>
+        </label>
+        <p class="dim small" id="quality-note"></p>
+        <div class="sliders">
+          <label class="select" id="row-display" hidden>Display mode
+            <select id="set-display"><option value="fullscreen">Fullscreen</option><option value="maximized">Maximised window</option><option value="windowed">Window</option></select>
+          </label>
+          <label class="select" id="row-winsize" hidden>Window size
+            <select id="set-winsize"><option value="1280x720">1280 × 720</option><option value="1600x900">1600 × 900</option><option value="1920x1080">1920 × 1080</option><option value="2560x1440">2560 × 1440</option></select>
+          </label>
+          <label class="slider">Resolution <output id="out-res"></output><input id="set-res" type="range" min="0.5" max="1" step="0.05"></label>
+          <label class="slider">Brightness<input id="set-bright" type="range" min="0.6" max="1.8" step="0.05"></label>
+          <label class="slider">Field of view<input id="set-fov" type="range" min="60" max="100" step="1"></label>
+        </div>
+        <div class="toggles">
+          <label class="toggle"><input id="set-dynres" type="checkbox"><span>Lower the resolution automatically when the frame rate drops</span></label>
+          <label class="toggle"><input id="set-showfps" type="checkbox"><span>Show frame rate</span></label>
+        </div>
       </div>
-      <p class="dim small">Graphics quality applies from the next match. Everything else applies straight away. If High stutters, Medium looks close and costs far less.</p>
+      <div class="stab" data-stab="sound" hidden>
+        <div class="sliders">
+          <label class="slider">Volume<input id="set-vol" type="range" min="0" max="1" step="0.02"></label>
+        </div>
+        <div class="toggles">
+          <label class="toggle"><input id="set-ptt" type="checkbox"><span>Voice chat: push to talk (hold a key) instead of an open microphone</span></label>
+        </div>
+      </div>
+      <div class="stab" data-stab="controls" hidden>
+        <div class="sliders">
+          <label class="slider">Mouse sensitivity<input id="set-sens" type="range" min="0.3" max="3" step="0.05"></label>
+          <label class="slider">Controller look speed<input id="set-padsens" type="range" min="0.4" max="2.2" step="0.05"></label>
+        </div>
+        <div class="toggles">
+          <label class="toggle"><input id="set-togglecrouch" type="checkbox"><span>Press crouch once instead of holding it</span></label>
+          <label class="toggle"><input id="set-padinvert" type="checkbox"><span>Controller: invert looking up and down</span></label>
+          <label class="toggle"><input id="set-vibrate" type="checkbox"><span>Controller: vibrate when he hits you</span></label>
+        </div>
+        <div class="row left"><button id="btn-set-keys" class="btn"><svg><use href="#i-keys"/></svg><span class="lbl">Change keys</span></button></div>
+      </div>
+      <div class="stab" data-stab="game" hidden>
+        <div class="toggles">
+          <label class="toggle"><input id="set-tips" type="checkbox"><span>Show control tips at the start of a match</span></label>
+          <label class="toggle"><input id="set-jumpscares" type="checkbox"><span>Jumpscares: a sudden face, a scream and a brief flash when he gets you</span></label>
+        </div>
+      </div>
       <div class="row"><button id="btn-fullscreen" class="btn"><svg><use href="#i-expand"/></svg><span class="lbl">Fullscreen</span></button><button data-close class="btn primary">Done</button></div>
     </div>
   </section>
@@ -252,28 +287,12 @@
         <button class="tab" data-tab="pad" role="tab" aria-selected="false"><svg><use href="#i-pad"/></svg><span class="lbl">Controller</span></button>
       </div>
       <div class="ctab" data-tab="kbm">
-      <div class="controls-grid">
-        <table class="keys">
-          <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>Move (walking backwards is slower)</td></tr>
-          <tr><td><kbd>Shift</kbd></td><td>Sprint. Uses stamina, and he hears it</td></tr>
-          <tr><td><kbd>C</kbd> or <kbd>Ctrl</kbd></td><td>Crouch: quiet, harder to see, fits under tables and beds</td></tr>
-          <tr><td><kbd>E</kbd></td><td>Doors, items, lockers, the piano, revive</td></tr>
-          <tr><td><kbd>F</kbd> or right click</td><td>Torch on or off</td></tr>
-          <tr><td>Left click</td><td>Use what you are holding: throw, flash the camera, drink, wind the alarm, draw with chalk</td></tr>
-          <tr><td><kbd>1</kbd>–<kbd>4</kbd> or wheel</td><td>Choose an inventory slot</td></tr>
-        </table>
-        <table class="keys">
-          <tr><td><kbd>G</kbd></td><td>Tap to drop what you hold. Hold, then let go, to toss it to a teammate</td></tr>
-          <tr><td><kbd>Space</kbd></td><td>In a locker: hold your breath while he checks it</td></tr>
-          <tr><td><kbd>Q</kbd> or middle click</td><td>Ping what you look at. When you are down, call for help</td></tr>
-          <tr><td><kbd>Tab</kbd></td><td>Notebook: objectives and notes</td></tr>
-          <tr><td><kbd>M</kbd> / <kbd>V</kbd></td><td>Mute your microphone / push to talk</td></tr>
-          <tr><td><kbd>Enter</kbd></td><td>Text chat</td></tr>
-          <tr><td><kbd>Esc</kbd></td><td>Release the mouse</td></tr>
-        </table>
-      </div>
-      <p class="dim small"><b>As the Headmaster in Hunt:</b> left click attacks, hold <kbd>Shift</kbd> to rage, <kbd>R</kbd> teleports, <kbd>T</kbd> sets a trap, <kbd>Q</kbd> kills the lights, <kbd>E</kbd> forces doors and rips open lockers.</p>
-      <p class="dim small">Browsers keep <kbd>Ctrl</kbd>+<kbd>W</kbd> for closing the tab. Crouch with <kbd>C</kbd>, or play in fullscreen from Settings.</p>
+        <p class="dim small">Click a key to change it, then press the new one. <kbd>Esc</kbd> cancels. If another action already uses that key, the two swap.</p>
+        <div class="controls-grid" id="kb-binds"></div>
+        <h3 class="sub">As the Headmaster in Hunt</h3>
+        <div class="controls-grid" id="kb-hunter"></div>
+        <p class="dim small" id="kb-note" role="status"></p>
+        <div class="row left"><button id="btn-keys-reset" class="btn"><span class="lbl">Reset keys to default</span></button></div>
       </div>
       <div class="ctab" data-tab="pad" hidden>
         <div class="pad-head">
@@ -309,6 +328,7 @@
       <button id="btn-resume" class="btn big primary">Resume</button>
       <div class="row"><button id="btn-pause-settings" class="btn"><svg><use href="#i-gear"/></svg><span class="lbl">Settings</span></button><button id="btn-pause-controls" class="btn"><svg><use href="#i-keys"/></svg><span class="lbl">Controls</span></button></div>
       <button id="btn-quit" class="btn ghost"><svg><use href="#i-exit"/></svg><span class="lbl">Leave the match</span></button>
+      <button id="btn-pause-exit" class="btn ghost" hidden><span class="lbl">Quit to desktop</span></button>
     </div>
   </section>
 

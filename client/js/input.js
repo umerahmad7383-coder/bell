@@ -1,4 +1,5 @@
 // Controllers (Xbox, PlayStation and other "standard" gamepads) and the button names shown on screen.
+import { binds, keyName } from './keys.js';
 //
 // The browser's Gamepad API has no events for buttons, so it is polled once per frame. Everything that
 // shows a key or button on screen goes through glyph()/label() below, so prompts switch between the
@@ -115,7 +116,8 @@ const ACTIONS = {
   interact: ['E', BTN.A], use: ['Left click', BTN.RT], torch: ['F', BTN.Y], drop: ['G', BTN.X],
   crouch: ['C', BTN.B], sprint: ['Shift', BTN.LT], breath: ['Space', BTN.LT], ping: ['Q', BTN.UP], mute: ['M', BTN.LEFT],
   notebook: ['Tab', BTN.VIEW], prev: ['Wheel', BTN.LB], next: ['Wheel', BTN.RB], slots: ['1–4', 'SLOTS'],
-  chat: ['Enter', null], pause: ['Esc', BTN.MENU], switch: ['Click', BTN.A],
+  chat: ['Enter', null], pause: ['Esc', BTN.MENU], switch: ['Click', BTN.A], talk: ['V', null],
+  forward: ['W', null], back: ['S', null], left: ['A', null], right: ['D', null],
   // the Headmaster
   attack: ['Left click', BTN.RT], rage: ['Shift', BTN.LT], teleport: ['R', BTN.X], trap: ['T', BTN.Y], lights: ['Q', BTN.B], force: ['E', BTN.A],
 };
@@ -142,16 +144,23 @@ export function padGlyph(b, kind = input.kind) {
   if (b === BTN.VIEW || b === BTN.MENU) return `<kbd class="pb sm">${ps ? (b === BTN.VIEW && kind === 'ps5' ? 'Create' : PS[b]) : XB[b]}</kbd>`;
   return `<kbd class="pb sh">${ps ? PS[b] : XB[b]}</kbd>`;
 }
+// which rebindable key (keys.js) each action's keyboard label follows; the Headmaster shares the survivors' keys
+const KB = { left: 'left', right: 'right', back: 'back', forward: 'forward', talk: 'talk', interact: 'interact', torch: 'torch', drop: 'drop', crouch: 'crouch', sprint: 'sprint', breath: 'breath', ping: 'ping', mute: 'mute', notebook: 'notebook', chat: 'chat', rage: 'sprint', teleport: 'teleport', trap: 'trap', lights: 'ping', force: 'interact' };
+function kbText(action, fallback) {
+  if (action === 'move') { const n = ['forward', 'left', 'back', 'right'].map((k) => keyName(binds[k])); return n.every((x) => x.length === 1) ? n.join(' ') : n.join(' / '); }
+  return KB[action] ? keyName(binds[KB[action]]) : fallback;
+}
+const escH = (t) => String(t).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 /** HTML for an action's key or button, in whatever the player is using right now */
 export function glyph(action) {
   const a = ACTIONS[action]; if (!a) return '';
-  if (input.mode !== 'pad' || a[1] === null) return a[0] === 'Left click' ? '<kbd>LMB</kbd>' : a[0] === 'Click' ? '<kbd>Click</kbd>' : `<kbd>${a[0]}</kbd>`;
+  if (input.mode !== 'pad' || a[1] === null) return a[0] === 'Left click' ? '<kbd>LMB</kbd>' : a[0] === 'Click' ? '<kbd>Click</kbd>' : `<kbd>${escH(kbText(action, a[0]))}</kbd>`;
   return padGlyph(a[1]);
 }
 /** plain-text name of an action's key or button (for toasts and other text-only places) */
 export function label(action) {
   const a = ACTIONS[action]; if (!a) return '';
-  if (input.mode !== 'pad' || a[1] === null) return a[0];
+  if (input.mode !== 'pad' || a[1] === null) return kbText(action, a[0]);
   const b = a[1];
   return input.kind === 'xbox' ? XB[b] : psName(b);
 }

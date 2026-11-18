@@ -50,6 +50,10 @@ function servePage(req, res) {
   res.type('html').send(html);
 }
 app.get(['/', '/index.html'], servePage);
+// the Windows app: a download page, and a short link that always fetches the newest installer from GitHub Releases
+const RELEASES = (process.env.RELEASES_REPO || 'umerahmad7383-coder/bell').replace(/[^\w.\/-]/g, '');
+app.get(['/download', '/download/'], (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(join(clientDir, 'download.html')); });
+app.get('/download/windows', (req, res) => res.redirect(302, `https://github.com/${RELEASES}/releases/latest/download/The-Last-Bell-Setup.exe`));
 // "no-cache" = the browser may keep files but must ask whether they changed before using them,
 // so a redeploy reaches every player on their next page load (no stale game code).
 app.use(express.static(clientDir, { etag: true, lastModified: true, setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
